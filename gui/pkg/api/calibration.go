@@ -14,11 +14,13 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// statusTopic is where the C++ calibrate node publishes its status updates.
-// See mowgli_interfaces/msg/CalibrateImuYawStatus and the discussion in
-// mowgli_interfaces/srv/CalibrateImuYaw for why the result moved off the
-// service response.
-const statusTopic = "/calibrate_imu_yaw_node/calibrate_status"
+// statusTopic is the logical key registered in providers.topicMap for the
+// CalibrateImuYawStatus topic — NOT the raw ROS topic name. The provider
+// translates this to /calibrate_imu_yaw_node/calibrate_status and creates a
+// foxglove_bridge subscription. See mowgli_interfaces/msg/CalibrateImuYawStatus
+// and the discussion in mowgli_interfaces/srv/CalibrateImuYaw for why the
+// result moved off the service response.
+const statusTopic = "calibrateStatus"
 
 // ---------------------------------------------------------------------------
 // Request / Response types

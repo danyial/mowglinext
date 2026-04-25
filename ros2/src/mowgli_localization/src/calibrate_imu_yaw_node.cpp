@@ -95,14 +95,14 @@ CalibrateImuYawNode::CalibrateImuYawNode(const rclcpp::NodeOptions& options)
   cmd_pub_ = create_publisher<geometry_msgs::msg::TwistStamped>("/cmd_vel_teleop", state_qos);
 
   hlc_client_ = create_client<mowgli_interfaces::srv::HighLevelControl>(
-    "/behavior_tree_node/high_level_control", rmw_qos_profile_services_default, cb_group_);
+    "/behavior_tree_node/high_level_control", rclcpp::ServicesQoS(), cb_group_);
 
   srv_ = create_service<mowgli_interfaces::srv::CalibrateImuYaw>(
     "~/calibrate",
     [this](const std::shared_ptr<mowgli_interfaces::srv::CalibrateImuYaw::Request> req,
            std::shared_ptr<mowgli_interfaces::srv::CalibrateImuYaw::Response> res)
     { on_calibrate(req, res); },
-    rmw_qos_profile_services_default, cb_group_);
+    rclcpp::ServicesQoS(), cb_group_);
 
   RCLCPP_INFO(get_logger(),
               "IMU yaw calibration node ready. Ensure robot is undocked with "

@@ -94,6 +94,17 @@ CalibrateImuYawNode::CalibrateImuYawNode(const rclcpp::NodeOptions& options)
   // it the right priority and downstream safety still applies.
   cmd_pub_ = create_publisher<geometry_msgs::msg::TwistStamped>("/cmd_vel_teleop", state_qos);
 
+  // Status topic carries the calibration result (the reason this exists is
+  // documented in CalibrateImuYaw.srv). transient_local + depth=1 lets a
+  // subscriber that attaches AFTER the run still receive the final status —
+  // job_id matching in the message handles the resulting stale-cache risk.
+  rclcpp::QoS status_qos(rclcpp::KeepLast(1));
+  status_qos.reliable();
+  status_qos.transient_local();
+  status_pub_ =
+    create_publisher<mowgli_interfaces::msg::CalibrateImuYawStatus>("~/calibrate_status",
+                                                                    status_qos);
+
   hlc_client_ = create_client<mowgli_interfaces::srv::HighLevelControl>(
     "/behavior_tree_node/high_level_control", rclcpp::ServicesQoS(), cb_group_);
 
@@ -240,39 +251,67 @@ bool CalibrateImuYawNode::wait_for_bt_state(int target, double timeout_sec)
 }
 
 // ---------------------------------------------------------------------------
-// Service handler
+// Service handler — thin gate that returns immediately
 // ---------------------------------------------------------------------------
+//
+// The actual calibration runs in a worker thread; the result is delivered on
+// the `~/calibrate_status` topic, not in this response. See header rationale.
 
 void CalibrateImuYawNode::on_calibrate(
-  const std::shared_ptr<mowgli_interfaces::srv::CalibrateImuYaw::Request> /*request*/,
+  const std::shared_ptr<mowgli_interfaces::srv::CalibrateImuYaw::Request> request,
   std::shared_ptr<mowgli_interfaces::srv::CalibrateImuYaw::Response> response)
 {
-  // Request's duration_sec is ignored (the motion profile dictates length).
-  // Kept in the .srv for compat.
+  const std::string job_id = request->job_id;
+
+  // Reject overlapping calls. compare_exchange would be cleaner but exchange
+  // is fine here since we never re-enter the no-running branch.
+  if (running_.exchange(true)) {
+    publish_status(job_id, /*done=*/true, /*success=*/false,
+                   "Another calibration run is already in progress.", nullptr);
+    response->success = false;
+    return;
+  }
 
   // ---- Preflight checks ------------------------------------------------
   if (is_charging_.load()) {
+    publish_status(job_id, true, false,
+                   "Refusing to calibrate while charging — undock the robot first. "
+                   "Calibration drives the robot ~0.6 m forward then back.",
+                   nullptr);
+    running_.store(false);
     response->success = false;
-    response->message =
-      "Refusing to calibrate while charging — undock the robot first. "
-      "Calibration drives the robot ~0.6 m forward then back.";
     return;
   }
   if (emergency_active_.load()) {
+    publish_status(job_id, true, false,
+                   "Refusing to calibrate while an emergency is active/latched. "
+                   "Clear the emergency first.",
+                   nullptr);
+    running_.store(false);
     response->success = false;
-    response->message =
-      "Refusing to calibrate while an emergency is active/latched. "
-      "Clear the emergency first.";
     return;
   }
   if (bt_state_.load() == HL_STATE_AUTONOMOUS) {
+    publish_status(job_id, true, false,
+                   "Refusing to calibrate while BT is AUTONOMOUS (mowing in progress). "
+                   "Stop mowing first (HOME command).",
+                   nullptr);
+    running_.store(false);
     response->success = false;
-    response->message =
-      "Refusing to calibrate while BT is AUTONOMOUS (mowing in progress). "
-      "Stop mowing first (HOME command).";
     return;
   }
 
+  // Preflight passed — kick off the worker thread and return success.
+  std::thread(&CalibrateImuYawNode::run_calibration, this, job_id).detach();
+  response->success = true;
+}
+
+// ---------------------------------------------------------------------------
+// Worker thread — full calibration drive + compute + final publish
+// ---------------------------------------------------------------------------
+
+void CalibrateImuYawNode::run_calibration(const std::string& job_id)
+{
   // ---- Enter RECORDING so firmware accepts cmd_vel_teleop --------------
   // Firmware's on_cmd_vel() drops commands when BT reports IDLE. RECORDING
   // lets teleop through without spinning the blade; CANCEL discards the
@@ -281,10 +320,11 @@ void CalibrateImuYawNode::on_calibrate(
   if (bt_state_.load() != HL_STATE_RECORDING) {
     RCLCPP_INFO(get_logger(), "Entering RECORDING mode for calibration drive.");
     if (!call_hlc(HL_CMD_RECORD_AREA, "enter recording")) {
-      response->success = false;
-      response->message =
-        "Could not enter RECORDING mode via BT. Check that the "
-        "behavior_tree_node is alive.";
+      publish_status(job_id, true, false,
+                     "Could not enter RECORDING mode via BT. Check that the "
+                     "behavior_tree_node is alive.",
+                     nullptr);
+      running_.store(false);
       return;
     }
     if (!wait_for_bt_state(HL_STATE_RECORDING, 5.0)) {
@@ -292,8 +332,8 @@ void CalibrateImuYawNode::on_calibrate(
       std::ostringstream m;
       m << "BT did not transition to RECORDING within 5s (stuck at state="
         << bt_state_.load() << ").";
-      response->success = false;
-      response->message = m.str();
+      publish_status(job_id, true, false, m.str(), nullptr);
+      running_.store(false);
       return;
     }
     need_exit_recording = true;
@@ -356,8 +396,9 @@ void CalibrateImuYawNode::on_calibrate(
     if (need_exit_recording) {
       call_hlc(HL_CMD_RECORD_CANCEL, "cancel after drive error");
     }
-    response->success = false;
-    response->message = "Drive profile errored: " + drive_error_msg;
+    publish_status(job_id, true, false, "Drive profile errored: " + drive_error_msg,
+                   nullptr);
+    running_.store(false);
     return;
   }
 
@@ -383,41 +424,59 @@ void CalibrateImuYawNode::on_calibrate(
   CalibrationResult result =
     compute_imu_yaw(imu_snapshot, odom_snapshot, baseline_start_count);
 
-  response->success = result.success;
-  response->message = result.message;
-  response->imu_yaw_rad = result.imu_yaw_rad;
-  response->imu_yaw_deg = result.imu_yaw_deg;
-  response->samples_used = result.samples_used;
-  response->std_dev_deg = result.std_dev_deg;
-  response->imu_pitch_rad = result.imu_pitch_rad;
-  response->imu_pitch_deg = result.imu_pitch_deg;
-  response->imu_roll_rad = result.imu_roll_rad;
-  response->imu_roll_deg = result.imu_roll_deg;
-  response->stationary_samples_used = result.stationary_samples_used;
-  response->gravity_mag_mps2 = result.gravity_mag_mps2;
-
-  if (response->success) {
+  if (result.success) {
     RCLCPP_INFO(get_logger(),
                 "imu_yaw = %+.4f rad (%+.2f°) from %d samples, stddev %.2f°",
-                response->imu_yaw_rad, response->imu_yaw_deg, response->samples_used,
-                response->std_dev_deg);
-    if (response->stationary_samples_used >= MIN_STATIONARY_SAMPLES) {
+                result.imu_yaw_rad, result.imu_yaw_deg, result.samples_used,
+                result.std_dev_deg);
+    if (result.stationary_samples_used >= MIN_STATIONARY_SAMPLES) {
       RCLCPP_INFO(get_logger(),
                   "imu_pitch = %+.4f rad (%+.2f°), imu_roll = %+.4f rad (%+.2f°) "
                   "from %d stationary samples (|g|=%.3f m/s²). Promote to "
                   "mowgli_robot.yaml if |pitch| or |roll| > 1°.",
-                  response->imu_pitch_rad, response->imu_pitch_deg, response->imu_roll_rad,
-                  response->imu_roll_deg, response->stationary_samples_used,
-                  response->gravity_mag_mps2);
+                  result.imu_pitch_rad, result.imu_pitch_deg, result.imu_roll_rad,
+                  result.imu_roll_deg, result.stationary_samples_used,
+                  result.gravity_mag_mps2);
     } else {
       RCLCPP_WARN(get_logger(),
                   "Pitch/roll not computed: only %d stationary IMU samples "
                   "(need ≥ %d).",
-                  response->stationary_samples_used, MIN_STATIONARY_SAMPLES);
+                  result.stationary_samples_used, MIN_STATIONARY_SAMPLES);
     }
   } else {
-    RCLCPP_WARN(get_logger(), "Calibration failed: %s", response->message.c_str());
+    RCLCPP_WARN(get_logger(), "Calibration failed: %s", result.message.c_str());
   }
+
+  publish_status(job_id, /*done=*/true, result.success, result.message, &result);
+  running_.store(false);
+}
+
+// ---------------------------------------------------------------------------
+// Status topic publish helper
+// ---------------------------------------------------------------------------
+
+void CalibrateImuYawNode::publish_status(const std::string& job_id, bool done,
+                                         bool success, const std::string& message,
+                                         const CalibrationResult* r)
+{
+  mowgli_interfaces::msg::CalibrateImuYawStatus msg;
+  msg.job_id = job_id;
+  msg.done = done;
+  msg.success = success;
+  msg.message = message;
+  if (r) {
+    msg.imu_yaw_rad = r->imu_yaw_rad;
+    msg.imu_yaw_deg = r->imu_yaw_deg;
+    msg.samples_used = r->samples_used;
+    msg.std_dev_deg = r->std_dev_deg;
+    msg.imu_pitch_rad = r->imu_pitch_rad;
+    msg.imu_pitch_deg = r->imu_pitch_deg;
+    msg.imu_roll_rad = r->imu_roll_rad;
+    msg.imu_roll_deg = r->imu_roll_deg;
+    msg.stationary_samples_used = r->stationary_samples_used;
+    msg.gravity_mag_mps2 = r->gravity_mag_mps2;
+  }
+  status_pub_->publish(msg);
 }
 
 // ---------------------------------------------------------------------------

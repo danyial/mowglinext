@@ -47,7 +47,10 @@
 #include <string>
 #include <vector>
 
+#include <thread>
+
 #include "geometry_msgs/msg/twist_stamped.hpp"
+#include "mowgli_interfaces/msg/calibrate_imu_yaw_status.hpp"
 #include "mowgli_interfaces/msg/emergency.hpp"
 #include "mowgli_interfaces/msg/high_level_status.hpp"
 #include "mowgli_interfaces/msg/status.hpp"
@@ -120,9 +123,25 @@ private:
   bool wait_for_bt_state(int target, double timeout_sec);
 
   // ---- Service handler ---------------------------------------------------
+  // Returns immediately. The actual calibration runs in a worker thread and
+  // publishes its result on the `~/calibrate_status` topic. Response.success
+  // means "request accepted to start", not "calibration completed cleanly".
   void on_calibrate(
     const std::shared_ptr<mowgli_interfaces::srv::CalibrateImuYaw::Request> request,
     std::shared_ptr<mowgli_interfaces::srv::CalibrateImuYaw::Response> response);
+
+  // ---- Worker thread + publisher helper ----------------------------------
+  // run_calibration is invoked on a dedicated thread spawned by on_calibrate.
+  // It performs the drive profile, computes the yaw/pitch/roll, and publishes
+  // a final CalibrateImuYawStatus with done=true.
+  void run_calibration(const std::string& job_id);
+
+  // publish_status assembles a CalibrateImuYawStatus and publishes it on
+  // status_pub_. Used both by run_calibration's terminal publish and by
+  // on_calibrate's preflight-fail short-circuit.
+  void publish_status(const std::string& job_id, bool done, bool success,
+                      const std::string& message,
+                      const CalibrationResult* result_or_null);
 
   // ---- Constants ---------------------------------------------------------
   // Sample filter thresholds (yaw solve)
@@ -165,6 +184,7 @@ private:
   rclcpp::Subscription<mowgli_interfaces::msg::HighLevelStatus>::SharedPtr bt_status_sub_;
 
   rclcpp::Publisher<geometry_msgs::msg::TwistStamped>::SharedPtr cmd_pub_;
+  rclcpp::Publisher<mowgli_interfaces::msg::CalibrateImuYawStatus>::SharedPtr status_pub_;
   rclcpp::Service<mowgli_interfaces::srv::CalibrateImuYaw>::SharedPtr srv_;
   rclcpp::Client<mowgli_interfaces::srv::HighLevelControl>::SharedPtr hlc_client_;
 
@@ -177,6 +197,12 @@ private:
   std::atomic<bool> is_charging_{false};
   std::atomic<bool> emergency_active_{false};
   std::atomic<int> bt_state_{HL_STATE_NULL};
+
+  // True while a calibration run (preflight + drive + compute + publish) is
+  // in flight. Guards against concurrent service calls. The worker thread is
+  // detached and clears this flag itself on exit, so the main thread never
+  // joins it.
+  std::atomic<bool> running_{false};
 };
 
 }  // namespace mowgli_localization

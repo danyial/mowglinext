@@ -330,7 +330,7 @@ private:
 
     // Battery voltage curve — configurable via mowgli_robot.yaml
     battery_full_voltage_ =
-        static_cast<float>(declare_parameter<double>("battery_full_voltage", 28.5));
+        static_cast<float>(declare_parameter<double>("battery_full_voltage", 28.0));
     battery_empty_voltage_ =
         static_cast<float>(declare_parameter<double>("battery_empty_voltage", 24.0));
 
@@ -418,7 +418,7 @@ private:
   bool undock_ready_{false};
 
   // Battery voltage curve parameters
-  float battery_full_voltage_{28.5f};
+  float battery_full_voltage_{28.0f};
   float battery_empty_voltage_{24.0f};
 };
 

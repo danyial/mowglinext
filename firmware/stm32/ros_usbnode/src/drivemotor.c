@@ -140,8 +140,8 @@ static uint8_t right_dir_req;
  *     of the lower dynamic range, which re-introduces overshoot at low wz.
  *
  * Values below are conservative defaults; tune per bench observation. */
-#define STICTION_PWM             10
-#define STICTION_TAPER_END_PWM   25
+#define STICTION_PWM             20
+#define STICTION_TAPER_END_PWM   30
 
 static int16_t apply_stiction_offset(int16_t pwm_signed)
 {

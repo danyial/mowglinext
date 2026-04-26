@@ -67,10 +67,11 @@ class ChargingLidarCoordinator(Node):
                 "ChargingLidarCoordinator disabled via parameter")
         else:
             self.get_logger().info(
-                f"ChargingLidarCoordinator active: "
-                f"debounce={self._debounce_sec:.1f}s, "
-                f"lidar={self._lidar_svc_name}, "
-                f"kicp={self._kicp_svc_name}"
+                "ChargingLidarCoordinator active: debounce=%.1fs, "
+                "lidar=%s, kicp=%s",
+                self._debounce_sec,
+                self._lidar_svc_name,
+                self._kicp_svc_name,
             )
 
     def _on_status(self, msg: Status) -> None:
@@ -83,8 +84,9 @@ class ChargingLidarCoordinator(Node):
         if is_charging and not self._last_charging:
             self._charging_since = now
             self.get_logger().info(
-                f"Charging started — will pause LiDAR+K-ICP after "
-                f"{self._debounce_sec:.1f}s of stable charging"
+                "Charging started — will pause LiDAR+K-ICP after %.1fs "
+                "of stable charging",
+                self._debounce_sec,
             )
 
         elif not is_charging and self._last_charging:
@@ -113,8 +115,8 @@ class ChargingLidarCoordinator(Node):
         ):
             if not client.wait_for_service(timeout_sec=self._svc_timeout):
                 self.get_logger().warning(
-                    f"{label} lifecycle service unavailable "
-                    f"(not lifecycle, or stack down) — skipping {verb}"
+                    "%s lifecycle service unavailable — skipping %s",
+                    label, verb,
                 )
                 continue
             req = ChangeState.Request()
@@ -125,9 +127,10 @@ class ChargingLidarCoordinator(Node):
                 self._on_change_done(fut, lbl, vrb))
 
         self._currently_paused = pause
-        reason = "charging stable" if pause else "charging cleared"
         self.get_logger().info(
-            f"LiDAR+K-ICP {verb} requested ({reason})"
+            "LiDAR+K-ICP %s requested (%s)",
+            verb,
+            "charging stable" if pause else "charging cleared",
         )
 
     def _on_change_done(
@@ -136,14 +139,14 @@ class ChargingLidarCoordinator(Node):
             resp = future.result()
         except Exception as exc:
             self.get_logger().error(
-                f"{node_label} {verb} failed: {exc}")
+                "%s %s failed: %s", node_label, verb, exc)
             return
         if resp.success:
-            self.get_logger().info(f"{node_label} {verb} OK")
+            self.get_logger().info("%s %s OK", node_label, verb)
         else:
             self.get_logger().warning(
-                f"{node_label} {verb} returned success=false "
-                "(likely already in target state)"
+                "%s %s returned success=false (likely already in target state)",
+                node_label, verb,
             )
 
 

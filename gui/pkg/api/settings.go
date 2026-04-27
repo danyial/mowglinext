@@ -42,21 +42,20 @@ const (
 )
 
 type rclParameterValue struct {
-	Type               uint8     `json:"type"`
-	BoolValue          bool      `json:"bool_value"`
-	IntegerValue       int64     `json:"integer_value"`
-	DoubleValue        float64   `json:"double_value"`
-	StringValue        string    `json:"string_value"`
-	// Array fields are required by rcl_interfaces/msg/ParameterValue. Leaving
-	// them out of the struct makes encoding/json omit them from the JSON
-	// payload, which causes foxglove_bridge's CDR serializer to abort with
-	// "Service failed to send a response" — rosbridge needs every field to
-	// be present even when unused.
-	ByteArrayValue     []uint8   `json:"byte_array_value"`
-	BoolArrayValue     []bool    `json:"bool_array_value"`
-	IntegerArrayValue  []int64   `json:"integer_array_value"`
-	DoubleArrayValue   []float64 `json:"double_array_value"`
-	StringArrayValue   []string  `json:"string_array_value"`
+	Type         uint8   `json:"type"`
+	BoolValue    bool    `json:"bool_value"`
+	IntegerValue int64   `json:"integer_value"`
+	DoubleValue  float64 `json:"double_value"`
+	StringValue  string  `json:"string_value"`
+	// rcl_interfaces/msg/ParameterValue requires every array field even
+	// when unused. encoding/json serializes []uint8 as base64 (not a JSON
+	// array), which foxglove_bridge's CDR encoder rejects — declare the
+	// byte array as []uint16 so it round-trips as a numeric array.
+	ByteArrayValue    []uint16  `json:"byte_array_value"`
+	BoolArrayValue    []bool    `json:"bool_array_value"`
+	IntegerArrayValue []int64   `json:"integer_array_value"`
+	DoubleArrayValue  []float64 `json:"double_array_value"`
+	StringArrayValue  []string  `json:"string_array_value"`
 }
 
 // newRclParameterValue allocates the empty arrays so the JSON payload sent to
@@ -64,7 +63,7 @@ type rclParameterValue struct {
 func newRclParameterValue(t uint8) rclParameterValue {
 	return rclParameterValue{
 		Type:              t,
-		ByteArrayValue:    []uint8{},
+		ByteArrayValue:    []uint16{},
 		BoolArrayValue:    []bool{},
 		IntegerArrayValue: []int64{},
 		DoubleArrayValue:  []float64{},
@@ -148,6 +147,9 @@ func liveTuneMapServer(ctx context.Context, rosProvider types.IRosProvider, payl
 	}
 
 	req := setParametersReq{Parameters: params}
+	if dbg, err := json.Marshal(req); err == nil {
+		log.Printf("liveTuneMapServer: request JSON = %s", string(dbg))
+	}
 	var res setParametersRes
 	callCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()

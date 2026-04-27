@@ -2,7 +2,7 @@ name: Sensors — GPS NMEA
 
 on:
   push:
-    branches: [main, dev, 'feat/**']
+    branches: [main, dev, 'feat/**', 'migrate/**']
     paths:
       - 'sensors/gps-nmea/**'
       - '.github/workflows/sensors-gps-nmea.yml'

@@ -317,6 +317,14 @@ MapServerNode::MapServerNode(const rclcpp::NodeOptions& options)
         on_get_outline_path(req, res);
       });
 
+  set_planning_params_srv_ = create_service<mowgli_interfaces::srv::SetPlanningParams>(
+      "~/set_planning_params",
+      [this](const mowgli_interfaces::srv::SetPlanningParams::Request::SharedPtr req,
+             mowgli_interfaces::srv::SetPlanningParams::Response::SharedPtr res)
+      {
+        on_set_planning_params(req, res);
+      });
+
   get_coverage_status_srv_ = create_service<mowgli_interfaces::srv::GetCoverageStatus>(
       "~/get_coverage_status",
       [this](const mowgli_interfaces::srv::GetCoverageStatus::Request::SharedPtr req,
@@ -3411,6 +3419,81 @@ void MapServerNode::on_get_outline_path(
               outline_offset_,
               outline_overlap_,
               res->outline_path.poses.size());
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SetPlanningParams service (live-tunable subset of Mowing Pattern settings)
+// ─────────────────────────────────────────────────────────────────────────────
+
+void MapServerNode::on_set_planning_params(
+    const mowgli_interfaces::srv::SetPlanningParams::Request::SharedPtr req,
+    mowgli_interfaces::srv::SetPlanningParams::Response::SharedPtr res)
+{
+  // Sentinels: -1 for outline_passes, <0 for the doubles, >180 for the
+  // mow-angle (since -1 already means "auto"). Anything else overwrites the
+  // cached planner parameter.
+  std::vector<std::string> changed;
+
+  if (req->outline_passes >= 0)
+  {
+    outline_passes_ = req->outline_passes;
+    changed.push_back("outline_passes=" + std::to_string(outline_passes_));
+  }
+  if (req->outline_offset >= 0.0)
+  {
+    outline_offset_ = req->outline_offset;
+    changed.push_back("outline_offset=" + std::to_string(outline_offset_));
+  }
+  if (req->outline_overlap >= 0.0)
+  {
+    outline_overlap_ = req->outline_overlap;
+    changed.push_back("outline_overlap=" + std::to_string(outline_overlap_));
+  }
+  if (req->path_spacing > 0.0)
+  {
+    path_spacing_ = req->path_spacing;
+    changed.push_back("path_spacing=" + std::to_string(path_spacing_));
+  }
+  if (req->mow_angle_offset_deg <= 180.0)
+  {
+    // GUI sentinel: -1 means "auto" (NaN drives auto-MBR in
+    // ensure_strip_layout). Any other value is the absolute angle in degrees.
+    mow_angle_override_deg_ = (req->mow_angle_offset_deg < 0.0)
+                                  ? std::numeric_limits<double>::quiet_NaN()
+                                  : req->mow_angle_offset_deg;
+    changed.push_back("mow_angle_offset_deg=" +
+                      std::to_string(req->mow_angle_offset_deg));
+  }
+  if (req->headland_width >= 0.0)
+  {
+    strip_boundary_margin_m_ = req->headland_width;
+    changed.push_back("headland_width=" + std::to_string(strip_boundary_margin_m_));
+  }
+
+  // Invalidate cached strip layouts so the next get_next_strip / preview_plan
+  // call regenerates with the new parameters. on_set_parameters_callback
+  // already does this implicitly because ensure_strip_layout reads the
+  // updated members directly, but layouts cached from a prior plan could
+  // stick around — clear them defensively.
+  strip_layouts_.clear();
+
+  res->success = true;
+  if (changed.empty())
+  {
+    res->message = "no fields above sentinel — nothing changed";
+  }
+  else
+  {
+    std::string joined;
+    for (size_t i = 0; i < changed.size(); ++i)
+    {
+      if (i > 0) joined += ", ";
+      joined += changed[i];
+    }
+    res->message = joined;
+  }
+
+  RCLCPP_INFO(get_logger(), "SetPlanningParams: %s", res->message.c_str());
 }
 
 void MapServerNode::on_get_coverage_status(

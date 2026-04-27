@@ -1,0 +1,19 @@
+# Live-tunable planning parameters for map_server_node.
+#
+# Sentinel values: -1 on any field means "leave the current value alone".
+# This lets the GUI push only the keys the operator actually changed and
+# avoids accidentally clobbering server-side overrides.
+#
+# Use this service instead of rcl_interfaces/srv/SetParameters because
+# foxglove_bridge fails to serialize the nested ParameterValue type
+# ("rosidl_typesupport_cpp not supported"), making the standard
+# parameter API unreachable from the GUI.
+int32   outline_passes        # >=0; -1 = unchanged
+float64 outline_offset        # >=0; <0 = unchanged
+float64 outline_overlap       # >=0; <0 = unchanged
+float64 path_spacing          # >0;  <=0 = unchanged
+float64 mow_angle_offset_deg  # any; >180 = unchanged (sentinel kept distinct from auto=-1)
+float64 headland_width        # >=0; <0 = unchanged
+---
+bool   success
+string message

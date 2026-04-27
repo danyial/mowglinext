@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/cedbossneo/mowglinext/pkg/msgs/mowgli"
 	"github.com/cedbossneo/mowglinext/pkg/types"
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
@@ -30,150 +31,111 @@ func SettingsRoutes(r *gin.RouterGroup, dbProvider types.IDBProvider, rosProvide
 	PostSettingsStatus(r, dbProvider)
 }
 
-// ─── rcl_interfaces/srv/SetParameters ad-hoc structs ─────────────────────────
-// Generated structs aren't shipped for rcl_interfaces — we only need this one
-// service so we declare the request shape inline. JSON tags match the ROS2
-// rosbridge wire format (snake_case fields).
-
-const (
-	rclParamTypeBool    = 1
-	rclParamTypeInteger = 2
-	rclParamTypeDouble  = 3
-)
-
-type rclParameterValue struct {
-	Type         uint8   `json:"type"`
-	BoolValue    bool    `json:"bool_value"`
-	IntegerValue int64   `json:"integer_value"`
-	DoubleValue  float64 `json:"double_value"`
-	StringValue  string  `json:"string_value"`
-	// rcl_interfaces/msg/ParameterValue requires every array field even
-	// when unused. encoding/json serializes []uint8 as base64 (not a JSON
-	// array), which foxglove_bridge's CDR encoder rejects — declare the
-	// byte array as []uint16 so it round-trips as a numeric array.
-	ByteArrayValue    []uint16  `json:"byte_array_value"`
-	BoolArrayValue    []bool    `json:"bool_array_value"`
-	IntegerArrayValue []int64   `json:"integer_array_value"`
-	DoubleArrayValue  []float64 `json:"double_array_value"`
-	StringArrayValue  []string  `json:"string_array_value"`
-}
-
-// newRclParameterValue allocates the empty arrays so the JSON payload sent to
-// foxglove_bridge contains the full ParameterValue message shape.
-func newRclParameterValue(t uint8) rclParameterValue {
-	return rclParameterValue{
-		Type:              t,
-		ByteArrayValue:    []uint16{},
-		BoolArrayValue:    []bool{},
-		IntegerArrayValue: []int64{},
-		DoubleArrayValue:  []float64{},
-		StringArrayValue:  []string{},
-	}
-}
-
-type rclParameter struct {
-	Name  string            `json:"name"`
-	Value rclParameterValue `json:"value"`
-}
-
-type setParametersReq struct {
-	Parameters []rclParameter `json:"parameters"`
-}
-
-type rclSetParametersResult struct {
-	Successful bool   `json:"successful"`
-	Reason     string `json:"reason"`
-}
-
-type setParametersRes struct {
-	Results []rclSetParametersResult `json:"results"`
-}
-
-// liveTunableMapServerKeys maps GUI fields that are safe to push into
-// /map_server_node/set_parameters to their ROS parameter type. The type must
-// match the C++ declare_parameter<T>() call exactly — sending an integer to a
-// double-typed param (or vice versa) makes the node reject the request with
-// "Service failed to send a response", because rcl validates types before the
-// callback runs. JSON numbers always arrive as float64 in Go regardless of
-// the declared schema type, so we cannot infer the ROS type from the payload.
-var liveTunableMapServerKeys = map[string]uint8{
-	"outline_passes":       rclParamTypeInteger,
-	"outline_offset":       rclParamTypeDouble,
-	"outline_overlap":      rclParamTypeDouble,
-	"path_spacing":         rclParamTypeDouble,
-	"mow_angle_offset_deg": rclParamTypeDouble,
-	"headland_width":       rclParamTypeDouble,
-}
-
-// liveTuneMapServer pushes the live-tunable subset of payload to
-// /map_server_node/set_parameters. Errors are logged but not returned —
-// yaml-write has already persisted the values, so the next restart will
-// pick them up even if the live update fails (e.g. node not running).
+// liveTuneMapServer pushes the live-tunable subset of the settings payload
+// to /map_server_node/set_planning_params. We use a custom mowgli_interfaces
+// service rather than the standard rcl_interfaces/srv/SetParameters because
+// foxglove_bridge cannot serialize the nested ParameterValue type ("rosidl
+// typesupport identifier rosidl_typesupport_cpp not supported by this
+// library, rmw_serialize: invalid data size"). The custom service is flat
+// primitives, which the bridge handles cleanly.
+//
+// Sentinels (-1 for the int, <0 for the doubles) leave the existing value
+// alone, so we only push fields the operator actually changed and never
+// clobber server-side overrides.
 func liveTuneMapServer(ctx context.Context, rosProvider types.IRosProvider, payload map[string]any) {
 	if rosProvider == nil {
 		return
 	}
-	params := make([]rclParameter, 0, len(payload))
-	for key, val := range payload {
-		paramType, ok := liveTunableMapServerKeys[key]
-		if !ok {
-			continue
-		}
-		var f float64
-		switch v := val.(type) {
-		case float64:
-			f = v
-		case float32:
-			f = float64(v)
-		case int:
-			f = float64(v)
-		case int64:
-			f = float64(v)
-		case json.Number:
-			parsed, err := v.Float64()
-			if err != nil {
-				log.Printf("liveTuneMapServer: cannot parse json.Number for %q: %v", key, err)
-				continue
-			}
-			f = parsed
-		default:
-			log.Printf("liveTuneMapServer: unsupported type for %q: %T", key, val)
-			continue
-		}
 
-		pv := newRclParameterValue(paramType)
-		switch paramType {
-		case rclParamTypeInteger:
-			pv.IntegerValue = int64(f)
-		case rclParamTypeDouble:
-			pv.DoubleValue = f
-		}
-		params = append(params, rclParameter{Name: key, Value: pv})
+	// Sentinel defaults — every field starts as "unchanged". Each branch
+	// below overwrites the sentinel only if the GUI sent a value for that
+	// key, so the server-side handler knows which fields to mutate.
+	req := mowgli.SetPlanningParamsReq{
+		OutlinePasses:     -1,
+		OutlineOffset:     -1.0,
+		OutlineOverlap:    -1.0,
+		PathSpacing:       -1.0,
+		MowAngleOffsetDeg: 999.0, // distinct from the GUI's own -1 = auto sentinel
+		HeadlandWidth:     -1.0,
 	}
-	if len(params) == 0 {
+	anyChange := false
+
+	asFloat := func(v any) (float64, bool) {
+		switch x := v.(type) {
+		case float64:
+			return x, true
+		case float32:
+			return float64(x), true
+		case int:
+			return float64(x), true
+		case int64:
+			return float64(x), true
+		case json.Number:
+			f, err := x.Float64()
+			return f, err == nil
+		}
+		return 0, false
+	}
+
+	if v, ok := payload["outline_passes"]; ok {
+		if f, ok2 := asFloat(v); ok2 {
+			req.OutlinePasses = int32(f)
+			anyChange = true
+		}
+	}
+	if v, ok := payload["outline_offset"]; ok {
+		if f, ok2 := asFloat(v); ok2 {
+			req.OutlineOffset = f
+			anyChange = true
+		}
+	}
+	if v, ok := payload["outline_overlap"]; ok {
+		if f, ok2 := asFloat(v); ok2 {
+			req.OutlineOverlap = f
+			anyChange = true
+		}
+	}
+	if v, ok := payload["path_spacing"]; ok {
+		if f, ok2 := asFloat(v); ok2 {
+			req.PathSpacing = f
+			anyChange = true
+		}
+	}
+	if v, ok := payload["mow_angle_offset_deg"]; ok {
+		if f, ok2 := asFloat(v); ok2 {
+			req.MowAngleOffsetDeg = f
+			anyChange = true
+		}
+	}
+	if v, ok := payload["headland_width"]; ok {
+		if f, ok2 := asFloat(v); ok2 {
+			req.HeadlandWidth = f
+			anyChange = true
+		}
+	}
+	if !anyChange {
 		return
 	}
 
-	req := setParametersReq{Parameters: params}
 	if dbg, err := json.Marshal(req); err == nil {
 		log.Printf("liveTuneMapServer: request JSON = %s", string(dbg))
 	}
-	var res setParametersRes
+
+	var res mowgli.SetPlanningParamsRes
 	callCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
 	if err := rosProvider.CallService(callCtx,
-		"/map_server_node/set_parameters",
+		"/map_server_node/set_planning_params",
 		&req, &res,
-		"rcl_interfaces/srv/SetParameters"); err != nil {
-		log.Printf("liveTuneMapServer: SetParameters call failed (yaml is still persisted): %v", err)
+		"mowgli_interfaces/srv/SetPlanningParams"); err != nil {
+		log.Printf("liveTuneMapServer: SetPlanningParams call failed (yaml is still persisted): %v", err)
 		return
 	}
-	for i, r := range res.Results {
-		if !r.Successful {
-			log.Printf("liveTuneMapServer: param %s rejected by node: %s", params[i].Name, r.Reason)
-		}
+	if !res.Success {
+		log.Printf("liveTuneMapServer: server rejected update: %s", res.Message)
+		return
 	}
-	log.Printf("liveTuneMapServer: pushed %d live params to map_server_node", len(params))
+	log.Printf("liveTuneMapServer: %s", res.Message)
 }
 
 // GetSettingsStatus returns whether onboarding has been completed.

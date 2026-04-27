@@ -192,6 +192,22 @@ type SetDockingPointRes struct {
 	Success                   bool                           `json:"success"`
 }
 
+// SetPlanningParamsReq for mowgli_interfaces/srv/SetPlanningParams request.
+type SetPlanningParamsReq struct {
+	OutlinePasses             int32                          `json:"outline_passes"`
+	OutlineOffset             float64                        `json:"outline_offset"`
+	OutlineOverlap            float64                        `json:"outline_overlap"`
+	PathSpacing               float64                        `json:"path_spacing"`
+	MowAngleOffsetDeg         float64                        `json:"mow_angle_offset_deg"`
+	HeadlandWidth             float64                        `json:"headland_width"`
+}
+
+// SetPlanningParamsRes for mowgli_interfaces/srv/SetPlanningParams response.
+type SetPlanningParamsRes struct {
+	Success                   bool                           `json:"success"`
+	Message                   string                         `json:"message"`
+}
+
 // TriggerReplanReq for mowgli_interfaces/srv/TriggerReplan request.
 type TriggerReplanReq struct {
 	Reason                    string                         `json:"reason"`

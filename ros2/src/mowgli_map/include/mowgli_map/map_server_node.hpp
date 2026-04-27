@@ -52,6 +52,7 @@
 #include <mowgli_interfaces/srv/get_recovery_point.hpp>
 #include <mowgli_interfaces/srv/preview_plan.hpp>
 #include <mowgli_interfaces/srv/set_docking_point.hpp>
+#include <mowgli_interfaces/srv/set_planning_params.hpp>
 #include <std_srvs/srv/trigger.hpp>
 
 namespace mowgli_map
@@ -204,6 +205,20 @@ private:
   void on_get_outline_path(
       const mowgli_interfaces::srv::GetOutlinePath::Request::SharedPtr req,
       mowgli_interfaces::srv::GetOutlinePath::Response::SharedPtr res);
+
+  /// Live-tunable planner-parameter setter.
+  ///
+  /// Companion to the rcl_interfaces SetParameters service that mirrors only
+  /// the six fields the GUI's Mowing-Pattern card exposes. Exists because
+  /// foxglove_bridge cannot serialize rcl_interfaces/ParameterValue's nested
+  /// type — calls to the standard service round-trip with "rmw_serialize:
+  /// invalid data size" before the node sees them. This service uses flat
+  /// primitives (int + 5 doubles) so the bridge's CDR encoder can emit a
+  /// clean payload. Sentinels (<0 for the doubles, -1 for the int) leave the
+  /// existing value alone, mirroring REST PATCH semantics.
+  void on_set_planning_params(
+      const mowgli_interfaces::srv::SetPlanningParams::Request::SharedPtr req,
+      mowgli_interfaces::srv::SetPlanningParams::Response::SharedPtr res);
 
   /// Compute a recovery pose inside the nearest mowing area.
   ///
@@ -517,6 +532,7 @@ private:
   rclcpp::Service<mowgli_interfaces::srv::GetRecoveryPoint>::SharedPtr get_recovery_point_srv_;
   rclcpp::Service<mowgli_interfaces::srv::PreviewPlan>::SharedPtr preview_plan_srv_;
   rclcpp::Service<mowgli_interfaces::srv::GetOutlinePath>::SharedPtr get_outline_path_srv_;
+  rclcpp::Service<mowgli_interfaces::srv::SetPlanningParams>::SharedPtr set_planning_params_srv_;
 
   // ── TF ────────────────────────────────────────────────────────────────────
   std::shared_ptr<tf2_ros::Buffer> tf_buffer_;

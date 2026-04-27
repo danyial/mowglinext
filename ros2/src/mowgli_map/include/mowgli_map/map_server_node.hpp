@@ -49,6 +49,7 @@
 #include <mowgli_interfaces/srv/get_mowing_area.hpp>
 #include <mowgli_interfaces/srv/get_next_strip.hpp>
 #include <mowgli_interfaces/srv/get_recovery_point.hpp>
+#include <mowgli_interfaces/srv/preview_plan.hpp>
 #include <mowgli_interfaces/srv/set_docking_point.hpp>
 #include <std_srvs/srv/trigger.hpp>
 
@@ -189,6 +190,12 @@ private:
   void on_get_coverage_status(
       const mowgli_interfaces::srv::GetCoverageStatus::Request::SharedPtr req,
       mowgli_interfaces::srv::GetCoverageStatus::Response::SharedPtr res);
+
+  /// Returns the full strip plan for an area as a single nav_msgs/Path so
+  /// the GUI can render it as an overlay before the operator presses Start.
+  /// Phase A of #53. Read-only — does not mutate planner state.
+  void on_preview_plan(const mowgli_interfaces::srv::PreviewPlan::Request::SharedPtr req,
+                       mowgli_interfaces::srv::PreviewPlan::Response::SharedPtr res);
 
   /// Compute a recovery pose inside the nearest mowing area.
   ///
@@ -469,6 +476,7 @@ private:
   rclcpp::Service<mowgli_interfaces::srv::GetNextStrip>::SharedPtr get_next_strip_srv_;
   rclcpp::Service<mowgli_interfaces::srv::GetCoverageStatus>::SharedPtr get_coverage_status_srv_;
   rclcpp::Service<mowgli_interfaces::srv::GetRecoveryPoint>::SharedPtr get_recovery_point_srv_;
+  rclcpp::Service<mowgli_interfaces::srv::PreviewPlan>::SharedPtr preview_plan_srv_;
 
   // ── TF ────────────────────────────────────────────────────────────────────
   std::shared_ptr<tf2_ros::Buffer> tf_buffer_;

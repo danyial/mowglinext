@@ -285,6 +285,14 @@ MapServerNode::MapServerNode(const rclcpp::NodeOptions& options)
         on_get_next_strip(req, res);
       });
 
+  preview_plan_srv_ = create_service<mowgli_interfaces::srv::PreviewPlan>(
+      "~/preview_plan",
+      [this](const mowgli_interfaces::srv::PreviewPlan::Request::SharedPtr req,
+             mowgli_interfaces::srv::PreviewPlan::Response::SharedPtr res)
+      {
+        on_preview_plan(req, res);
+      });
+
   get_coverage_status_srv_ = create_service<mowgli_interfaces::srv::GetCoverageStatus>(
       "~/get_coverage_status",
       [this](const mowgli_interfaces::srv::GetCoverageStatus::Request::SharedPtr req,
@@ -2883,6 +2891,97 @@ void MapServerNode::on_get_next_strip(
               strip.column_index,
               res->coverage_percent,
               remaining);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Preview plan service (#53 phase A) — read-only snapshot of the planned
+// strip layout for an area. Does NOT mutate planner state, the mow_progress
+// layer, or the active strip cursor; the GUI uses this purely for the static
+// overlay rendered before the operator presses Start.
+// ─────────────────────────────────────────────────────────────────────────────
+void MapServerNode::on_preview_plan(
+    const mowgli_interfaces::srv::PreviewPlan::Request::SharedPtr req,
+    mowgli_interfaces::srv::PreviewPlan::Response::SharedPtr res)
+{
+  std::lock_guard<std::mutex> lock(map_mutex_);
+
+  if (req->area_index >= areas_.size())
+  {
+    res->success = false;
+    res->error_message = "area_index out of range";
+    return;
+  }
+
+  // Refresh the cached layout (re-runs ensure_strip_layout if missing or
+  // stale). Idempotent: returns the same strips a real GetNextStrip call
+  // would consume.
+  ensure_strip_layout(req->area_index);
+
+  if (req->area_index >= strip_layouts_.size() ||
+      !strip_layouts_[req->area_index].valid)
+  {
+    res->success = false;
+    res->error_message = "strip layout unavailable for area";
+    return;
+  }
+
+  const auto& layout = strip_layouts_[req->area_index];
+
+  res->strip_plan.header.frame_id = map_frame_;
+  res->strip_plan.header.stamp = now();
+  res->segment_starts.clear();
+  res->segment_starts.reserve(layout.strips.size());
+
+  // Recompute the polygon diagonal + effective inset that ensure_strip_layout
+  // used internally, so the GUI can show the operator how the adaptive
+  // sizing rule (#50 phase 1) is behaving on this area. Cheap — same poly
+  // we already have in areas_.
+  const auto& poly = areas_[req->area_index].polygon;
+  double min_x = 1e9, max_x = -1e9, min_y = 1e9, max_y = -1e9;
+  for (const auto& p : poly.points)
+  {
+    min_x = std::min(min_x, static_cast<double>(p.x));
+    max_x = std::max(max_x, static_cast<double>(p.x));
+    min_y = std::min(min_y, static_cast<double>(p.y));
+    max_y = std::max(max_y, static_cast<double>(p.y));
+  }
+  const double diag = std::hypot(max_x - min_x, max_y - min_y);
+  const double effective_inset =
+      std::clamp(diag * 0.05, 0.15, strip_boundary_margin_m_);
+
+  // Concatenate every strip's centerline samples into a single Path. Each
+  // strip becomes a contiguous run of poses; segment_starts[i] points at
+  // the first pose of the i-th strip so the GUI can colour transits
+  // differently and draw arrows at strip starts.
+  for (const auto& strip : layout.strips)
+  {
+    res->segment_starts.push_back(
+        static_cast<uint32_t>(res->strip_plan.poses.size()));
+    nav_msgs::msg::Path strip_path =
+        strip_to_path(strip, req->area_index);
+    for (auto& pose : strip_path.poses)
+    {
+      pose.header = res->strip_plan.header;
+      res->strip_plan.poses.push_back(pose);
+    }
+  }
+
+  res->success = true;
+  res->error_message = "";
+  res->num_strips = static_cast<uint32_t>(layout.strips.size());
+  res->polygon_diag_m = static_cast<float>(diag);
+  res->effective_inset_m = static_cast<float>(effective_inset);
+  res->mow_angle_deg = static_cast<float>(layout.mow_angle * 180.0 / M_PI);
+
+  RCLCPP_INFO(get_logger(),
+              "PreviewPlan area=%u: %u strips, %zu poses, "
+              "diag=%.2fm inset=%.2fm angle=%.1f°",
+              req->area_index,
+              res->num_strips,
+              res->strip_plan.poses.size(),
+              diag,
+              effective_inset,
+              res->mow_angle_deg);
 }
 
 void MapServerNode::on_get_coverage_status(

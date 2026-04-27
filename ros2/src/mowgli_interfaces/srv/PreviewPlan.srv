@@ -1,0 +1,31 @@
+# Returns a static preview of the strip plan for an area, so the GUI can
+# render it as an overlay on the map BEFORE mowing starts. This lets the
+# operator verify the planned layout (strip count, orientation, edge gaps)
+# without burning battery on a dry-run mow.
+#
+# Phase A (this revision): the response carries the concatenated strip
+# centerlines as a single nav_msgs/Path. Adjacent strips are joined in the
+# array; the GUI splits them visually using the segment_starts indices, so
+# transit between strips can be drawn in a different colour.
+
+uint32 area_index
+---
+bool success
+string error_message
+
+# All strip centerlines, end-to-end. Each pose is in the map frame with
+# orientation set to the strip-tangent direction, matching what the actual
+# planner produces via /map_server_node/get_next_strip.
+nav_msgs/Path strip_plan
+
+# Indices into strip_plan.poses where each strip starts (length == num_strips).
+# segment_starts[0] is always 0; segment_starts[i] is the first pose of the
+# i-th strip. Allows the GUI to draw inter-strip transits in a different
+# colour without re-computing.
+uint32[] segment_starts
+
+# Diagnostic figures the operator may want to see in the GUI:
+uint32 num_strips
+float32 polygon_diag_m
+float32 effective_inset_m   # the actual inset used (after adaptive scaling)
+float32 mow_angle_deg       # strip orientation in map frame

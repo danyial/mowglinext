@@ -339,6 +339,23 @@ private:
   /// tracker overshoot.
   double strip_boundary_margin_m_{0.5};
 
+  /// Center-to-center distance between adjacent strips. Setting this less
+  /// than `mower_width_` produces overlap (safer against FTC tracking
+  /// drift). Default 0.0 = "use mower_width_" for backwards compatibility
+  /// with configs that never set this; recommended set to ≤0.7 × mower_width_
+  /// in mowgli_robot.yaml. The legacy hard-coded `+= mower_width_` step
+  /// produced exactly-edge-to-edge strips with zero drift tolerance.
+  double path_spacing_{0.0};
+
+  /// Fraction of strip-centerline samples that must read mowed for the strip
+  /// to count as done. Was hard-coded to 0.20 (default arg of is_strip_mowed)
+  /// which marked strips as done after touching just 20% of the centerline —
+  /// the turn-radius overspray of mark_cells_mowed (a circle of radius
+  /// mower_width/2 around the robot) easily hit 20% of an adjacent strip's
+  /// centerline during turns, so strips got marked done without ever being
+  /// driven. 0.85 forces the robot to actually traverse most of the strip.
+  double strip_mowed_threshold_{0.85};
+
   // ── State ─────────────────────────────────────────────────────────────────
   grid_map::GridMap map_;
   mutable std::mutex map_mutex_;

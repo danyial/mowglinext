@@ -6,6 +6,16 @@ map_server_node:
     map_frame: "map"
     decay_rate_per_hour: 0.1
     mower_width: 0.18
+    # Strip center-to-center distance. Set < mower_width for overlap (safer
+    # against FTC tracking drift). 0.0 = fall back to mower_width (legacy
+    # behaviour). 0.13 with mower_width 0.18 = ~28% overlap.
+    path_spacing: 0.13
+    # Fraction of strip-centerline samples that must read mowed before the
+    # strip is considered done. Was effectively 0.20 before
+    # (default arg of is_strip_mowed) which let turn-radius overspray
+    # mark adjacent strips as mowed without ever driving them. 0.85
+    # forces the robot to traverse most of the strip end-to-end.
+    strip_mowed_threshold: 0.85
     map_file_path: ""
     areas_file_path: "/ros2_ws/maps/areas.dat"
     publish_rate: 1.0

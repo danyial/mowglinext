@@ -97,28 +97,6 @@ ament_target_dependencies(localization_monitor_node
 )
 
 # ---------------------------------------------------------------------------
-# Executable: calibrate_imu_yaw_node
-# ---------------------------------------------------------------------------
-# Ported from rclpy to rclcpp to dodge a foxglove_bridge ↔ rclpy ↔ cyclonedds
-# cross-language service typesupport dispatch bug (closes #19). All other
-# custom services in mowgli_* are rclcpp and work via the GUI; only this one
-# was hosted by rclpy.
-
-add_executable(calibrate_imu_yaw_node
-  src/calibrate_imu_yaw_node.cpp
-)
-
-target_include_directories(calibrate_imu_yaw_node PUBLIC ${INCLUDE_DIR})
-
-ament_target_dependencies(calibrate_imu_yaw_node
-  rclcpp
-  sensor_msgs
-  nav_msgs
-  geometry_msgs
-  mowgli_interfaces
-)
-
-# ---------------------------------------------------------------------------
 # Install
 # ---------------------------------------------------------------------------
 
@@ -132,7 +110,6 @@ install(
     wheel_odometry_node
     navsat_to_absolute_pose_node
     localization_monitor_node
-    calibrate_imu_yaw_node
   ARCHIVE DESTINATION lib
   LIBRARY DESTINATION lib
   RUNTIME DESTINATION lib/${PROJECT_NAME}
@@ -143,9 +120,16 @@ install(
   DESTINATION share/${PROJECT_NAME}/config
 )
 
-# Python nodes (installed executable, run via `ros2 run mowgli_localization ...`)
+# Python nodes (installed executable, run via `ros2 run mowgli_localization ...`).
+# calibrate_imu_yaw_node.py: upstream Python with a single-bool service
+# response + full-result topic publish (~/calibrate_status, transient_local) —
+# the topic-split is what dodges the foxglove_bridge ↔ rmw_cyclonedds
+# typesupport-dispatch bug that originally motivated the rclcpp port (#19).
+# Replaces the rclcpp port (Decision A → A2 revision 2026-04-27) so we
+# regain upstream's dock pre-phase + future mag-fitting code paths.
 install(
   PROGRAMS
+    scripts/calibrate_imu_yaw_node.py
     scripts/cog_to_imu.py
     scripts/dock_yaw_to_set_pose.py
     scripts/kinematic_icp_encoder_adapter.py

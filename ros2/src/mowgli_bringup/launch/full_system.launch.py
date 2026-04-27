@@ -21,7 +21,7 @@ Complete Mowgli robot mower system launch.
 
 Brings up all subsystems:
   1. mowgli.launch.py        — hardware bridge, RSP, twist_mux
-  2. navigation.launch.py    — SLAM, FusionCore, Nav2
+  2. navigation.launch.py    — robot_localization (dual EKF), Nav2
   3. Behavior tree node       — mowgli_behavior
   4. Map server               — mowgli_map
   5. Wheel odometry            — mowgli_localization
@@ -111,7 +111,12 @@ def generate_launch_description() -> LaunchDescription:
     behavior_params = os.path.join(behavior_dir, "config", "behavior_tree.yaml")
     map_params = os.path.join(map_dir, "config", "map_server.yaml")
     nav2_params_file = os.path.join(bringup_dir, "config", "nav2_params.yaml")
-    localization_params = os.path.join(bringup_dir, "config", "localization.yaml")
+    # FusionCore's localization.yaml was deleted in the 2026-04-27 migration
+    # to robot_localization. The dual-EKF tuning lives in robot_localization.yaml
+    # (loaded by navigation.launch.py). The two custom localization helpers
+    # below (navsat_to_absolute_pose, localization_monitor) only need a handful
+    # of parameters which are passed inline / left at their declare_parameter
+    # defaults — no shared YAML required.
     monitoring_params = os.path.join(monitoring_dir, "config", "diagnostics.yaml")
     mqtt_params = os.path.join(monitoring_dir, "config", "mqtt_bridge.yaml")
     # Robot-specific config (bind-mounted from mowgli-docker/config/mowgli/)
@@ -139,7 +144,8 @@ def generate_launch_description() -> LaunchDescription:
     )
 
     # ------------------------------------------------------------------
-    # 2. navigation.launch.py — FusionCore + Nav2 (+ optional Kinematic-ICP)
+    # 2. navigation.launch.py — robot_localization (dual EKF) + Nav2
+    #                           (+ optional Kinematic-ICP)
     # ------------------------------------------------------------------
     navigation_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
@@ -189,8 +195,9 @@ def generate_launch_description() -> LaunchDescription:
     # (disabled) and rely on hardware_bridge alone.
     # ------------------------------------------------------------------
     # 7a. NavSat → AbsolutePose converter (for GUI + BT)
-    # FusionCore takes /gps/fix directly; this node converts to
-    # /gps/absolute_pose for the GUI and behavior tree.
+    # navsat_transform_node takes /gps/fix directly for the EKF pipeline;
+    # this node publishes a parallel /gps/absolute_pose (Mowgli-specific
+    # message) for the GUI/BT, and /gps/pose_cov which ekf_map_node fuses.
     # ------------------------------------------------------------------
     datum_lat = float(robot_params.get("datum_lat", 0.0))
     datum_lon = float(robot_params.get("datum_lon", 0.0))
@@ -200,7 +207,6 @@ def generate_launch_description() -> LaunchDescription:
         name="navsat_to_absolute_pose",
         output="screen",
         parameters=[
-            localization_params,
             {"datum_lat": datum_lat, "datum_lon": datum_lon},
             {"use_sim_time": use_sim_time},
         ],
@@ -215,7 +221,6 @@ def generate_launch_description() -> LaunchDescription:
         name="localization_monitor_node",
         output="screen",
         parameters=[
-            localization_params,
             {"use_sim_time": use_sim_time},
         ],
     )

@@ -30,8 +30,12 @@ var topicMap = map[string]topicDef{
 	"status":              {"/hardware_bridge/status", "mowgli_interfaces/msg/Status"},
 	"highLevelStatus":     {"/behavior_tree_node/high_level_status", "mowgli_interfaces/msg/HighLevelStatus"},
 	"gps":                 {"/gps/absolute_pose", "mowgli_interfaces/msg/AbsolutePose"},
-	"pose":                {"/fusion/odom", "nav_msgs/msg/Odometry"},
-	"fusionRaw":           {"/fusion/odom", "nav_msgs/msg/Odometry"},
+	// The robot's global pose comes from ekf_map_node (robot_localization
+	// dual-EKF) since the 2026-04-24 migration away from FusionCore. The
+	// "fusionRaw" key is retained for legacy symmetry but now also points
+	// at the same ekf_map output — there is no separate FusionCore stream.
+	"pose":                {"/odometry/filtered_map", "nav_msgs/msg/Odometry"},
+	"fusionRaw":           {"/odometry/filtered_map", "nav_msgs/msg/Odometry"},
 	"btLog":               {"/behavior_tree_log", "nav2_msgs/msg/BehaviorTreeLog"},
 	"imu":                 {"/imu/data", "sensor_msgs/msg/Imu"},
 	"ticks":               {"/wheel_odom", "nav_msgs/msg/Odometry"},
@@ -47,6 +51,12 @@ var topicMap = map[string]topicDef{
 	"robotDescription":    {"/robot_description", "std_msgs/msg/String"},                       // published once
 	"recordingTrajectory": {"/behavior_tree_node/recording_trajectory", "nav_msgs/msg/Path"},   // area recording preview
 	"calibrateStatus":     {"/calibrate_imu_yaw_node/calibrate_status", "mowgli_interfaces/msg/CalibrateImuYawStatus"}, // result topic for the IMU-yaw calibration (see CalibrateImuYaw.srv for why)
+	// Synthetic heading source fused by ekf_map (robot_localization). Carries
+	// sensor_msgs/Imu with only `orientation` and `orientation_covariance[8]`
+	// populated — see cog_to_imu.py in mowgli_localization. The upstream
+	// `magYaw` ↔ /imu/mag_yaw mapping is omitted in this fork (mag pipeline
+	// removed during 2026-04-27 migration).
+	"cogHeading":          {"/imu/cog_heading", "sensor_msgs/msg/Imu"},
 }
 
 // ---------------------------------------------------------------------------

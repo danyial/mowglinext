@@ -11,6 +11,13 @@ bt_navigator:
     odom_topic: /wheel_odom
     bt_loop_duration: 10
     default_server_timeout: 60
+    # Default is 1.0 s — observed on ARM that planner_server / controller_server
+    # finish lifecycle transition to active before bt_navigator but their
+    # action servers (compute_path_to_pose / follow_path) are not fully
+    # registered in the DDS graph yet, so bt_navigator's BT creation fails
+    # with "action server not available" and lifecycle_manager aborts
+    # bring-up. 10 s is cheap insurance; it only waits longer on startup.
+    wait_for_service_timeout: 10000
     # Custom Nav2 BT that adds GoalCheckerSelector (required when multiple
     # goal_checker_plugins are configured in controller_server).
     # Paths are injected by navigation.launch.py via RewrittenYaml — keep empty here.
@@ -43,6 +50,11 @@ controller_server:
     # leaving strips hanging over the polygon edge.
     # CPU delta for 5→10 Hz is modest; on a Jazzy stack with rmw_cyclonedds
     # it's well within budget.
+    # 10 Hz — robot moves 3 cm per cycle at 0.3 m/s and the upstream
+    # GPS / costmap data only refreshes at 5-10 Hz, so a 20 Hz
+    # controller would re-evaluate the same snapshot half the time.
+    # The previous "course correction lag" was caused by a 2 s RPP
+    # transform_tolerance, not by the controller rate.
     controller_frequency: 10.0
     # Default 0.30s causes "Costmap timed out waiting for update" error 107
     # on ARM (local_costmap update gaps of 600ms+ at 5Hz, 2-3s under load).
@@ -92,19 +104,31 @@ controller_server:
       # Restored 2026-04-24 after firmware deadband fix eliminated the
       # lever-arm slide (the reason these were ever lowered). The user
       # explicitly called out that the pre-fix 0.3 values were "tourne
-      # tout doucement" unusable. Keep 0.8 here — the oscillation
-      # observed during live mow was caused by the aggressive PID combo
-      # (kp_ang=4 + kd_ang=0.5), not by the rotation rate. PID now back
-      # to milder 2.5 + 0.0 (see below).
-      rotate_to_heading_angular_vel: 0.8
+      # tout doucement" unusable. 0.5 rad/s (was 0.8) matches the
+      # in-place turn rate OpenMower's PerimeterDocking uses
+      # (ANGULAR_SPEED 0.5 in PerimeterDocking.cpp) and the mowgli
+      # docking_ftc_local_planner max_cmd_vel_ang of 0.5. 0.8 was
+      # 60% above both reference stacks and contributed to the
+      # "erratic rotations" reported on 2026-04-24.
+      # 0.85 rad/s — at ω=0.5 each wheel runs at 0.08 m/s = PWM ~24,
+      # below the firmware ~PWM 40 deadband: motors buzz instead of
+      # rotating. 0.85 rad/s lifts wheel vel to 0.14 m/s = PWM 42 with
+      # a small margin over the deadband, matching Spin's
+      # min_rotational_vel.
+      rotate_to_heading_angular_vel: 0.85
       max_angular_accel: 1.0
       # RPP parameters — tuned for slow differential drive motors
-      desired_linear_vel: 0.3
+      desired_linear_vel: 0.2
       lookahead_dist: 0.6
       min_lookahead_dist: 0.3
       max_lookahead_dist: 1.0
       lookahead_time: 1.5
-      transform_tolerance: 2.0
+      # 0.3 s — tight enough that course corrections always use a fresh
+      # pose. Was 2.0 s, which let RPP pursue lookahead points based on
+      # 2-second-old TFs (60 cm of stale-pose error at 0.3 m/s) and
+      # showed up as "can't correct course fast enough, drives off
+      # boundary". Matches the controller_server tolerance.
+      transform_tolerance: 0.3
       # Larger lookahead = smoother turns, less oscillation
       use_velocity_scaled_lookahead_dist: true
       # Above the ~0.12 m/s motor deadband, otherwise RPP slows to a buzz
@@ -147,7 +171,7 @@ controller_server:
     # PRE_ROTATE -> FOLLOWING -> WAITING_FOR_GOAL_APPROACH -> POST_ROTATE
     FollowCoveragePath:
       plugin: "mowgli_nav2_plugins/FTCController"
-      speed_fast: 0.5              # carrot speed when far from path (m/s)
+      speed_fast: 0.20             # carrot speed when far from path (m/s)
       speed_fast_threshold: 0.5    # distance threshold for fast/slow (m)
       speed_fast_threshold_angle: 10.0  # angle threshold for fast (deg)
       speed_slow: 0.12             # carrot speed when close/turning (m/s)
@@ -192,13 +216,37 @@ controller_server:
       # lags the yaw estimate, so commanding 3 rad/s just feeds garbage
       # into the body-frame lateral state. FTC's PID still hits min
       # turning radii with 1 rad/s at 0.3 m/s.
-      max_cmd_vel_speed: 0.5
-      max_cmd_vel_ang: 1.0
+      # Ceilings bumped above the active targets so the FTC PID has
+      # headroom for correction without saturating:
+      #   * speed_fast (target) 0.20 m/s, cap 0.35 → 75% headroom
+      #   * speed_angular 0.79 rad/s (45°/s), cap 1.5 → ~90% headroom
+      # Both reference stacks sit cap ≈ 4–5× target (OM: 1.0/0.4,
+      # mowgli: 0.4/0.3, 3.1/0.79 rad/s). Our previous 0.20/1.0 had
+      # zero headroom — every correction had to first fight its own
+      # ceiling before steering, which looked like "erratic" to the
+      # operator. Smoother still enforces the hard global cap
+      # (0.25 m/s, 0.8 rad/s) so nothing reaches the motors uncapped.
+      max_cmd_vel_speed: 0.30
+      # 2026-04-26: dropped from 1.5 → 0.8 to align with smoother cap. Trace
+      # showed the FTC PID requesting ±1.5 rad/s on 19% of mowing samples,
+      # which the smoother was clipping anyway — but the unclipped PID
+      # output drove a yaw-only mode where the controller chased its own
+      # tail with no forward progress. Capping at the smoother value lets
+      # the PID settle instead of saturating.
+      max_cmd_vel_ang: 0.8
       max_goal_distance_error: 0.10  # goal reached within 10cm
       max_goal_angle_error: 15.0     # goal angle tolerance (deg)
       goal_timeout: 10.0
       max_follow_distance: 2.0
-      forward_only: false            # allow reversing
+      # 2026-04-26: reverted to false after a live test — forward_only=true
+      # broke the FTCController's lateral-error recovery: when the PID overshot
+      # the carrot, vx clamped to 0 instead of reversing to recenter, leaving
+      # only wz to chase a moving carrot → the robot drove in circles. The
+      # F9P RTK lag on direction reversals (1.5 s, ~0.30 m bias) is real but
+      # is not the right thing to fix at the controller layer. Smoothing the
+      # cmd_vel transitions via velocity_smoother accel/decel limits is the
+      # better mitigation; the EKF already handles bounded GPS lag.
+      forward_only: false
       # Obstacles: check the local_costmap obstacle_layer for the next
       # `obstacle_lookahead` path poses and abort the strip when one
       # of them falls on a LETHAL cell. Previously disabled, which let
@@ -294,42 +342,16 @@ waypoint_follower:
       enabled: true
       waypoint_pause_duration: 200
 
-# ---------------------------------------------------------------------------
-# Velocity smoother
-# ---------------------------------------------------------------------------
-velocity_smoother:
-  ros__parameters:
-    use_sim_time: false
-    enable_stamped_cmd_vel: true
-    smoothing_frequency: 20.0
-    scale_velocities: false
-    feedback: "OPEN_LOOP"
-    # Pipeline topics are wired via launch-file remappings, not yaml
-    # (nav2_velocity_smoother doesn't expose input_topic/output_topic as
-    # parameters — only 'cmd_vel' and 'smoothed_cmd_vel' remap targets).
-    # See nav2_navigation_launch.py for the actual wiring.
-    max_velocity: [0.3, 0.0, 0.8]
-    min_velocity: [-0.3, 0.0, -1.0]
-    # Higher acceleration to overcome grass resistance and static friction.
-    # The robot needs a burst of power to start moving on thick terrain.
-    # Angular accel 4.0 rad/s² — the smoother was a hidden ceiling that made
-    # short turns crawl even after bumping controller-side max_angular_accel.
-    max_accel: [0.8, 0.0, 4.0]
-    max_decel: [-0.5, 0.0, -4.0]
-    odom_topic: /wheel_odom
-    odom_duration: 0.1
-    # 0.04 m/s — small enough that nav2_behaviors' BackUp at 0.20 m/s still
-    # passes through after collision_monitor's PolygonSlow drops it to 30 %
-    # (= 0.06 m/s). The previous 0.13 m/s deadband zeroed every command in
-    # the slowdown zone around the dock, so undock would silently sit at
-    # zero velocity for the entire time_allowance and abort with code 6
-    # (DriveOnHeading goal not reached) — observed on the 2026-04-25 field
-    # session. The deadband-original justification ("match motor PWM-40
-    # buzz zone") still holds for normal driving; 0.04 m/s is well below
-    # any commanded coverage/transit speed and only matters at the edge of
-    # collision-slowdown bursts which used to break undock.
-    deadband_velocity: [0.04, 0.0, 0.0]
-    velocity_timeout: 1.0
+# velocity_smoother removed 2026-04-26 (upstream) — caps live in the
+# controllers (FTC max_cmd_vel_speed/ang, RPP desired_linear_vel) and the
+# firmware deadband; an extra ramp layer here only added latency and
+# confused tuning. cmd_vel pipeline now skips this hop.
+# Migration note danyial 2026-04-27: prior fork-only deadband fix
+# (0.04 m/s in velocity_smoother to unblock undock BackUp) is no longer
+# needed in this layer. Equivalent stiction handling now sits in the
+# firmware-deadband (fix/firmware-stiction-overcome-deadband) and the
+# softened FTC gains. Re-verify on Pi5 — first failure mode to watch is
+# undock BackUp not commanding through near the dock.
 
 # ---------------------------------------------------------------------------
 # Global costmap
@@ -338,22 +360,31 @@ global_costmap:
   global_costmap:
     ros__parameters:
       use_sim_time: false
-      # 1 Hz (was 0.5 Hz): faster updates reduce the chance of Nav2
-      # controller_server seeing a stale global costmap during action start.
-      # Costmap is 30×30m @ 5cm → obstacle_layer raycast is the main cost,
-      # still under 100 ms on ARM so 1 Hz is safe.
-      update_frequency: 1.0
-      publish_frequency: 1.0
+      # 2 Hz after the 2026-04-24 shrink from 30×30 to 20×20 m (160 k cells
+      # vs 360 k). Previously capped at 1 Hz because obstacle_layer raycast
+      # over the larger grid ate ARM CPU; the 44 % smaller grid gives
+      # enough headroom to double both the update and publish rates, which
+      # roughly halves the costmap-contributed Foxglove visual lag.
+      update_frequency: 2.0
+      publish_frequency: 2.0
       global_frame: map
       robot_base_frame: base_footprint
-      # TF tolerance: how stale a transform can be before the costmap rejects it.
-      # Keep this short — stale TF after SLAM corrections projects scans into
-      # wrong cells, creating phantom obstacles.  SLAM init delay is handled by
-      # wait_for_tf.py, not this parameter.
-      transform_tolerance: 5.0
-      # Force periodic full publishes even when no obstacles change, so
-      # isCurrent() reliably flips true for the planner's waitForCurrent.
-      always_send_full_costmap: true
+      # TF tolerance: how stale a transform can be before the costmap rejects
+      # it. At 0.8 rad/s max angular velocity the old 5.0s allowed up to 229°
+      # of rotation error on cached TFs — exactly the "pollution during
+      # rotation" symptom observed on the 2026-04-24 mow test. 0.5 s still
+      # absorbs the ~300 ms ARM scheduler jitter that motivated the earlier
+      # bump, while capping the per-scan rotation smear at ≤22°.
+      transform_tolerance: 0.5
+      # Experiment 2026-04-24: switch to delta mode (default). The old
+      # comment blamed an isCurrent() bug in Nav2 for needing
+      # always_send_full_costmap=true, but the Kilted release may have
+      # fixed it. If the controller_server starts failing goals with
+      # error 107 ("costmap not current"), revert to true. The delta
+      # path publishes full snapshot on first connect + only changed
+      # cells via /*_costmap_updates thereafter, cutting the steady
+      # state publish cost dramatically.
+      always_send_full_costmap: false
       # Footprint computed from mowgli_robot.yaml at launch time
       footprint: "[[0.50, 0.20], [0.50, -0.20], [-0.10, -0.20], [-0.10, 0.20]]"
       resolution: 0.05
@@ -365,8 +396,15 @@ global_costmap:
       # gardens: the costmap always centres on the robot, and obstacles are
       # detected in real time by the obstacle_layer.
       rolling_window: true
-      width: 30
-      height: 30
+      # 20×20 m rolling window (was 30×30). At resolution 0.05 m that is
+      # 400×400 = 160 k cells instead of 360 k — roughly 44 % of the data
+      # per publish tick, which brings the full-costmap publish rate back
+      # close to the 2 Hz target on ARM (was 1.3 Hz measured). LD19 useful
+      # range is 8 m and robot top speed is 0.3 m/s, so a 10 m planning
+      # radius from the rolling-window centre is still well beyond what
+      # Smac needs for strip-to-strip transit.
+      width: 20
+      height: 20
       # keepout_filter makes the polygon boundary visible to the Smac planner
       # so transit paths never exit the mowing area. `keepout_nav_margin_` in
       # map_server_node (default 1.5m) leaves a free band outside the polygon
@@ -440,11 +478,11 @@ local_costmap:
       publish_frequency: 2.0
       global_frame: odom
       robot_base_frame: base_footprint
-      # Raised from default 0.3s: on ARM the odom→base_footprint TF lookup
-      # occasionally exceeds 300ms of scheduler jitter, causing updateMap()
-      # to early-return without setting current_=true → controller_server's
-      # waitForCurrent times out every goal with error 107.
-      transform_tolerance: 5.0
+      # 0.5 s: balances ARM ~300 ms scheduler jitter against rotation-smear
+      # in scan projection. The 5.0 s value used before the 2026-04-24
+      # robot_localization test let stale TFs up to 229° out of date drive
+      # obstacle placement when the robot was rotating.
+      transform_tolerance: 0.5
       # Force periodic full publishes. Without this (default false), the
       # costmap only publishes when its map changes — but with only the
       # inflation_layer and no obstacle source, the map rarely changes,
@@ -507,8 +545,8 @@ local_costmap:
         inflation_radius: 0.40
 
 # ---------------------------------------------------------------------------
-# Map server / AMCL (unused — map->odom is a static identity with
-# Kinematic-ICP drift correction feeding FusionCore's encoder2 slot;
+# Map server / AMCL (unused — map->odom is published by ekf_map_node
+# with Kinematic-ICP drift correction feeding ekf_odom_node's odom1 slot;
 # kept for completeness / Nav2 lifecycle compatibility)
 # ---------------------------------------------------------------------------
 map_server:
@@ -534,7 +572,7 @@ docking_server:
     # 10 Hz (was 2 Hz): tighter approach control + faster polling of
     # isDocked()/isCharging() so the robot stops within ~100 ms of the
     # charging signal arriving rather than up to ~500 ms. Not high
-    # enough to starve Nav2/FusionCore on ARM.
+    # enough to starve Nav2/robot_localization on ARM.
     controller_frequency: 10.0
     initial_perception_timeout: 5.0
     # Firmware sets STATUS_BIT_CHARGING only after its own ADC debounce
@@ -574,8 +612,6 @@ docking_server:
       # Geometric distance (m) from base_link to dock pose for isDocked().
       # RTK-Fixed gives σ ~3 mm, so 0.05 m is a comfortable envelope
       # covering antenna-lever-arm effects and short GPS glitches.
-      # (The earlier 0.5 m was a concession to lifelong-SLAM drift, which
-      # no longer applies — FusionCore is the sole localizer.)
       docking_threshold: 0.05
       staging_x_offset: -1.0
       use_external_detection_pose: false
@@ -594,7 +630,9 @@ collision_monitor:
     base_frame_id: base_footprint
     odom_frame_id: odom
     cmd_vel_in_topic: cmd_vel_nav
-    cmd_vel_out_topic: cmd_vel_safe
+    # 2026-04-26: bypass velocity_smoother (now removed). Output goes
+    # straight to twist_mux on cmd_vel_monitored.
+    cmd_vel_out_topic: cmd_vel_monitored
     state_topic: collision_monitor_state
     transform_tolerance: 0.5
     # Source timeout: how long before stale sensor data triggers a stop.

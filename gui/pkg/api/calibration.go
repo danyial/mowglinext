@@ -34,18 +34,28 @@ type CalibrateImuYawRequest struct {
 
 // CalibrateImuYawResponse mirrors the ROS service response 1:1.
 type CalibrateImuYawResponse struct {
-	Success               bool    `json:"success"`
-	Message               string  `json:"message"`
-	ImuYawRad             float64 `json:"imu_yaw_rad"`
-	ImuYawDeg             float64 `json:"imu_yaw_deg"`
-	SamplesUsed           int32   `json:"samples_used"`
-	StdDevDeg             float64 `json:"std_dev_deg"`
-	ImuPitchRad           float64 `json:"imu_pitch_rad"`
-	ImuPitchDeg           float64 `json:"imu_pitch_deg"`
-	ImuRollRad            float64 `json:"imu_roll_rad"`
-	ImuRollDeg            float64 `json:"imu_roll_deg"`
-	StationarySamplesUsed int32   `json:"stationary_samples_used"`
-	GravityMagMps2        float64 `json:"gravity_mag_mps2"`
+	Success                 bool    `json:"success"`
+	Message                 string  `json:"message"`
+	ImuYawRad               float64 `json:"imu_yaw_rad"`
+	ImuYawDeg               float64 `json:"imu_yaw_deg"`
+	SamplesUsed             int32   `json:"samples_used"`
+	StdDevDeg               float64 `json:"std_dev_deg"`
+	ImuPitchRad             float64 `json:"imu_pitch_rad"`
+	ImuPitchDeg             float64 `json:"imu_pitch_deg"`
+	ImuRollRad              float64 `json:"imu_roll_rad"`
+	ImuRollDeg              float64 `json:"imu_roll_deg"`
+	StationarySamplesUsed   int32   `json:"stationary_samples_used"`
+	GravityMagMps2          float64 `json:"gravity_mag_mps2"`
+	// Dock fields populated when the service was invoked while
+	// charging (see calibrate_imu_yaw_node dock pre-phase). Null-ish
+	// when DockValid is false.
+	DockValid               bool    `json:"dock_valid"`
+	DockPoseX               float64 `json:"dock_pose_x"`
+	DockPoseY               float64 `json:"dock_pose_y"`
+	DockPoseYawRad          float64 `json:"dock_pose_yaw_rad"`
+	DockPoseYawDeg          float64 `json:"dock_pose_yaw_deg"`
+	DockYawSigmaDeg         float64 `json:"dock_yaw_sigma_deg"`
+	DockUndockDisplacementM float64 `json:"dock_undock_displacement_m"`
 }
 
 // CalibrationJobState enumerates the lifecycle of a long-running calibration.
@@ -180,6 +190,11 @@ func CalibrationRoutes(r *gin.RouterGroup, rosProvider types.IRosProvider) {
 	// long ROS service call, and the HTTP request waits on the local job
 	// store. Existing callers see no behavioural change.
 	group.POST("/imu-yaw", postCalibrateImuYaw(rosProvider, store))
+
+	// GET /calibration/status — reads dock_calibration.yaml / mag_calibration.yaml
+	// from disk for the GUI's calibration status panel. Independent of the
+	// async/sync calibration RPC above.
+	registerCalibrationStatusRoute(group)
 }
 
 // ---------------------------------------------------------------------------

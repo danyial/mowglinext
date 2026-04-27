@@ -73,6 +73,8 @@ ament_target_dependencies(navsat_to_absolute_pose_node
   sensor_msgs
   geometry_msgs
   std_srvs
+  tf2
+  tf2_ros
   mowgli_interfaces
 )
 
@@ -137,11 +139,6 @@ install(
 )
 
 install(
-  DIRECTORY launch/
-  DESTINATION share/${PROJECT_NAME}/launch
-)
-
-install(
   DIRECTORY config/
   DESTINATION share/${PROJECT_NAME}/config
 )
@@ -149,8 +146,11 @@ install(
 # Python nodes (installed executable, run via `ros2 run mowgli_localization ...`)
 install(
   PROGRAMS
+    scripts/cog_to_imu.py
+    scripts/dock_yaw_to_set_pose.py
     scripts/kinematic_icp_encoder_adapter.py
     scripts/kinematic_icp_scan_frame_relay.py
+    scripts/wheel_kicp_blend.py
     scripts/wheel_odom_tf_node.py
   DESTINATION lib/${PROJECT_NAME}
 )

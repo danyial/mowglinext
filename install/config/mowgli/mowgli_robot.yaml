@@ -27,10 +27,10 @@ mowgli:
         dock_max_retries: 3
         dock_pose_x: 0
         dock_pose_y: 0
-        dock_pose_yaw: 3.8307
+        dock_pose_yaw: 4.163
         dock_use_charger_detection: true
-        emergency_stop_on_lift: true
-        emergency_stop_on_tilt: true
+        emergency_stop_on_lift: false
+        emergency_stop_on_tilt: false
         gps_antenna_x: 0.3
         gps_antenna_y: 0
         gps_baudrate: 460800
@@ -65,7 +65,7 @@ mowgli:
         mow_angle_offset_deg: -1
         mower_model: YardForce500
         mowing_enabled: true
-        mowing_speed: 0.3
+        mowing_speed: 0.20
         ntrip_enabled: true
         ntrip_host: crtk.net
         ntrip_mountpoint: OUIL
@@ -81,9 +81,16 @@ mowgli:
         rain_delay_minutes: 30
         rain_mode: 2
         slam_mode: lifelong
-        ticks_per_revolution: 1050
+        # Informational only — no active code path consumes this. The
+        # firmware uses TICKS_PER_M=300 directly (board.h) and
+        # hardware_bridge_node converts ticks→metres via the same 300
+        # constant. With wheel_radius=0.04475 (circumference 0.281 m),
+        # 300 ticks/m implies ~84 ticks per revolution; the legacy
+        # 1050 here was a 12× off mismatch but harmless because nothing
+        # reads it.
+        ticks_per_revolution: 84
         tool_width: 0.18
-        transit_speed: 0.4
+        transit_speed: 0.25
         undock_distance: 1.5
         undock_speed: 0.15
         use_lidar: true

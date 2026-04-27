@@ -158,6 +158,9 @@ void FTCController::declareParameters(const rclcpp_lifecycle::LifecycleNode::Sha
   config_.goal_timeout = declare_double("goal_timeout", 5.0);
   config_.max_follow_distance = declare_double("max_follow_distance", 1.0);
 
+  // PRE_ROTATE behaviour
+  config_.pre_rotate_min_omega = declare_double("pre_rotate_min_omega", 0.85);
+
   // Options
   config_.forward_only = declare_bool("forward_only", true);
   config_.debug_pid = declare_bool("debug_pid", false);
@@ -295,6 +298,10 @@ rcl_interfaces::msg::SetParametersResult FTCController::onParameterChange(
     {
       config_.max_follow_distance = p.as_double();
     }
+    else if (key == "pre_rotate_min_omega")
+    {
+      config_.pre_rotate_min_omega = p.as_double();
+    }
     else if (key == "forward_only")
     {
       config_.forward_only = p.as_bool();
@@ -409,6 +416,11 @@ void FTCController::setPlan(const nav_msgs::msg::Path& path)
   last_lat_error_ = 0.0;
   last_lon_error_ = 0.0;
   last_angle_error_ = 0.0;
+
+  // PRE_ROTATE stall detection — captured the first time we see a non-zero
+  // angle_error_ (next computeVelocityCommands cycle).
+  pre_rotate_initial_angle_error_ = 0.0;
+  pre_rotate_stall_warned_ = false;
 
   nav_msgs::msg::Path pub_path;
 
@@ -571,7 +583,51 @@ FTCController::PlannerState FTCController::update_planner_state()
   {
     case PlannerState::PRE_ROTATE:
     {
-      if (time_in_current_state() > config_.goal_timeout)
+      // Capture the heading-error magnitude on the first tick where we have
+      // a real measurement, so the stall detector below has a baseline to
+      // compare against.
+      if (pre_rotate_initial_angle_error_ == 0.0 && angle_error_ != 0.0)
+      {
+        pre_rotate_initial_angle_error_ = std::abs(angle_error_);
+      }
+
+      const double t = time_in_current_state();
+      const double err_deg = std::abs(angle_error_) * (180.0 / M_PI);
+
+      // Per-cycle diagnostic log so the next outdoor test gives clean data
+      // on whether PRE_ROTATE is actually converging. Throttled to 200 ms so
+      // the log captures every second controller tick at 10 Hz without
+      // overwhelming the journal.
+      RCLCPP_INFO_THROTTLE(logger_,
+                           *clock_,
+                           200,
+                           "FTCController PRE_ROTATE: t=%.2fs angle_err=%.1f deg "
+                           "(initial=%.1f deg, tolerance=%.1f deg)",
+                           t,
+                           err_deg,
+                           pre_rotate_initial_angle_error_ * (180.0 / M_PI),
+                           config_.max_goal_angle_error);
+
+      // Stall detector: if we've spent more than 2 s rotating but the
+      // heading error has barely shrunk (< 2°), warn once. Most likely a
+      // motor stall, wheel slip, or a controller_server / BT loop that
+      // keeps re-issuing setPlan and resetting the state.
+      if (!pre_rotate_stall_warned_ && t > 2.0 &&
+          pre_rotate_initial_angle_error_ > 0.0 &&
+          (pre_rotate_initial_angle_error_ - std::abs(angle_error_)) <
+              (2.0 * M_PI / 180.0))
+      {
+        RCLCPP_WARN(logger_,
+                    "FTCController PRE_ROTATE STALL: %.2fs in state, angle_err "
+                    "%.1f -> %.1f deg (delta < 2 deg). Motor stall, wheel "
+                    "slip, or repeated setPlan?",
+                    t,
+                    pre_rotate_initial_angle_error_ * (180.0 / M_PI),
+                    err_deg);
+        pre_rotate_stall_warned_ = true;
+      }
+
+      if (t > config_.goal_timeout)
       {
         RCLCPP_ERROR(logger_,
                      "FTCController: timeout (%.1fs) in PRE_ROTATE.",
@@ -579,7 +635,7 @@ FTCController::PlannerState FTCController::update_planner_state()
         is_crashed_ = true;
         return PlannerState::FINISHED;
       }
-      if (std::abs(angle_error_) * (180.0 / M_PI) < config_.max_goal_angle_error)
+      if (err_deg < config_.max_goal_angle_error)
       {
         RCLCPP_INFO(logger_, "FTCController: PRE_ROTATE done, starting FOLLOWING.");
         return PlannerState::FOLLOWING;
@@ -962,6 +1018,22 @@ void FTCController::calculate_velocity_commands(double dt,
         angle_error_ * config_.kp_ang + i_angle_error_ * config_.ki_ang + d_angle * config_.kd_ang;
 
     ang_speed = std::clamp(ang_speed, -config_.max_cmd_vel_ang, config_.max_cmd_vel_ang);
+
+    // PRE_ROTATE deadband floor: ensure |ω| stays above the firmware motor
+    // stiction threshold while we still need to rotate, so the wheels
+    // actually engage instead of buzzing in place. The threshold is the
+    // empirical kMinRotVel from hardware_bridge_node.cpp (≈ 0.85 rad/s,
+    // wheel 0.14 m/s, PWM 42 — comfortably above the ~PWM 40 deadband).
+    // Only applied while still outside the goal-angle tolerance so we don't
+    // overshoot when about to transition to FOLLOWING.
+    if (current_state_ == PlannerState::PRE_ROTATE &&
+        config_.pre_rotate_min_omega > 0.0 &&
+        std::abs(angle_error_) * (180.0 / M_PI) >= config_.max_goal_angle_error &&
+        std::abs(ang_speed) < config_.pre_rotate_min_omega)
+    {
+      ang_speed = std::copysign(config_.pre_rotate_min_omega, angle_error_);
+    }
+
     cmd_vel.twist.angular.z = ang_speed;
 
     // Oscillation override in rotation states.

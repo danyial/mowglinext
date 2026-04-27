@@ -238,6 +238,15 @@ controller_server:
       max_goal_angle_error: 15.0     # goal angle tolerance (deg)
       goal_timeout: 10.0
       max_follow_distance: 2.0
+      # PRE_ROTATE deadband floor: while still outside max_goal_angle_error,
+      # raise the commanded |ω| to at least this value so the firmware motor
+      # stiction threshold doesn't silence the rotation. Mirrors the
+      # hardware_bridge_node kMinRotVel (0.85 rad/s ≈ wheel 0.14 m/s, PWM 42 —
+      # comfortably above the ~PWM 40 deadband). Without this, the kp_ang*err
+      # product can dip below the deadband on small heading errors and the
+      # robot stalls in PRE_ROTATE (observed 2026-04-27 with err ~ -13.8°).
+      # Set to 0.0 to disable.
+      pre_rotate_min_omega: 0.85
       # 2026-04-26: reverted to false after a live test — forward_only=true
       # broke the FTCController's lateral-error recovery: when the PID overshot
       # the carrot, vx clamped to 0 instead of reversing to recenter, leaving

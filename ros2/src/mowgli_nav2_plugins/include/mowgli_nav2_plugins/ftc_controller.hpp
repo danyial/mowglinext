@@ -133,6 +133,14 @@ private:
 
   rclcpp::Time last_time_;
 
+  // ── PRE_ROTATE stall detection ────────────────────────────────────────────
+
+  /// |angle_error_| (rad) when PRE_ROTATE was entered — used to detect a
+  /// rotation that isn't actually decreasing the heading error.
+  double pre_rotate_initial_angle_error_{0.0};
+  /// True once we've logged a stall warning for the current PRE_ROTATE entry.
+  bool pre_rotate_stall_warned_{false};
+
   // ── Collision checking ────────────────────────────────────────────────────
 
   bool checkCollision(int max_points);
@@ -216,6 +224,15 @@ private:
     double max_goal_angle_error{10.0};
     double goal_timeout{5.0};
     double max_follow_distance{1.0};
+
+    // PRE_ROTATE behaviour
+    /// Minimum |ω| (rad/s) commanded during PRE_ROTATE while still outside
+    /// max_goal_angle_error. Floors the kp_ang*err product so the firmware
+    /// motor deadband never silences an in-place rotation. Mirrors the
+    /// hardware_bridge_node kMinRotVel boost (0.85 rad/s ≈ wheel 0.14 m/s,
+    /// PWM ~42 — comfortably above the ~PWM 40 firmware deadband). Set to 0
+    /// to disable the floor.
+    double pre_rotate_min_omega{0.85};
 
     // Options
     bool forward_only{true};

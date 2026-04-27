@@ -136,8 +136,16 @@ export const MapPage: React.FC<{compact?: boolean}> = ({compact = false}) => {
                 data.strip_plan?.poses ?? [];
             const segmentStarts: number[] = data.segment_starts ?? [];
 
-            // Split poses into one LineString per strip using segment_starts.
+            // Split poses into one LineString per strip using segment_starts,
+            // and synthesise straight-line transit segments between consecutive
+            // strips so the operator can see the full path the robot will take.
+            // The actual transit during mowing goes through Smac/Nav2 and may
+            // route around obstacles; the straight line is a reasonable
+            // approximation for verification on obstacle-free polygons.
             const features: Feature[] = [];
+            const stripEnds: { index: number; coord: Position }[] = [];
+            const stripStarts: { index: number; coord: Position }[] = [];
+
             for (let i = 0; i < segmentStarts.length; i++) {
                 const start = segmentStarts[i];
                 const end = i + 1 < segmentStarts.length ? segmentStarts[i + 1] : poses.length;
@@ -150,10 +158,27 @@ export const MapPage: React.FC<{compact?: boolean}> = ({compact = false}) => {
                 }
                 features.push({
                     type: "Feature",
-                    properties: { strip_index: i },
+                    properties: { strip_index: i, kind: "strip" },
                     geometry: { type: "LineString", coordinates: coords },
                 });
+                stripStarts.push({ index: i, coord: coords[0] });
+                stripEnds.push({ index: i, coord: coords[coords.length - 1] });
             }
+
+            // Transit segments: connect strip[i].end → strip[i+1].start with
+            // a straight line. The boustrophedon order (strip 0 → 1 → 2 → …)
+            // is implicit in segment_starts ordering; planner returns strips
+            // in execution order.
+            for (let i = 0; i + 1 < stripEnds.length; i++) {
+                const from = stripEnds[i].coord;
+                const to = stripStarts[i + 1].coord;
+                features.push({
+                    type: "Feature",
+                    properties: { kind: "transit", from_strip: i, to_strip: i + 1 },
+                    geometry: { type: "LineString", coordinates: [from, to] },
+                });
+            }
+
             setPlanPreview({ type: "FeatureCollection", features });
             console.info(
                 `Plan preview: ${data.num_strips} strips, ` +
@@ -613,12 +638,41 @@ export const MapPage: React.FC<{compact?: boolean}> = ({compact = false}) => {
                     )}
                     {planPreview && (
                         <Source type={"geojson"} id={"plan-preview"} data={planPreview}>
-                            <Layer type={"line"} id={"plan-preview-strips"} paint={{
-                                "line-color": "#1d4ed8",
-                                "line-width": 2,
-                                "line-opacity": 0.85,
-                                "line-dasharray": [3, 2],
-                            }}/>
+                            {/* Transit segments — drawn first so strips render on top */}
+                            <Layer type={"line"} id={"plan-preview-transits"}
+                                filter={['==', ['get', 'kind'], 'transit']}
+                                paint={{
+                                    "line-color": "#f59e0b",
+                                    "line-width": 1.5,
+                                    "line-opacity": 0.7,
+                                    "line-dasharray": [2, 3],
+                                }}/>
+                            {/* Strips — solid blue, slightly thicker */}
+                            <Layer type={"line"} id={"plan-preview-strips"}
+                                filter={['==', ['get', 'kind'], 'strip']}
+                                paint={{
+                                    "line-color": "#1d4ed8",
+                                    "line-width": 2.5,
+                                    "line-opacity": 0.9,
+                                }}/>
+                            {/* Direction arrows along strips — repeats a ▶ glyph
+                                every 30 px so the operator can see the
+                                boustrophedon orientation. symbol-placement:line
+                                rotates each arrow to follow the local tangent. */}
+                            <Layer type={"symbol"} id={"plan-preview-arrows"}
+                                filter={['==', ['get', 'kind'], 'strip']}
+                                layout={{
+                                    "symbol-placement": "line",
+                                    "symbol-spacing": 30,
+                                    "text-field": "▶",
+                                    "text-size": 14,
+                                    "text-keep-upright": false,
+                                }}
+                                paint={{
+                                    "text-color": "#1e40af",
+                                    "text-halo-color": "#ffffff",
+                                    "text-halo-width": 1.2,
+                                }}/>
                         </Source>
                     )}
                 </Map> : <Spinner/>}
@@ -777,12 +831,41 @@ export const MapPage: React.FC<{compact?: boolean}> = ({compact = false}) => {
                     )}
                     {planPreview && (
                         <Source type={"geojson"} id={"plan-preview"} data={planPreview}>
-                            <Layer type={"line"} id={"plan-preview-strips"} paint={{
-                                "line-color": "#1d4ed8",
-                                "line-width": 2,
-                                "line-opacity": 0.85,
-                                "line-dasharray": [3, 2],
-                            }}/>
+                            {/* Transit segments — drawn first so strips render on top */}
+                            <Layer type={"line"} id={"plan-preview-transits"}
+                                filter={['==', ['get', 'kind'], 'transit']}
+                                paint={{
+                                    "line-color": "#f59e0b",
+                                    "line-width": 1.5,
+                                    "line-opacity": 0.7,
+                                    "line-dasharray": [2, 3],
+                                }}/>
+                            {/* Strips — solid blue, slightly thicker */}
+                            <Layer type={"line"} id={"plan-preview-strips"}
+                                filter={['==', ['get', 'kind'], 'strip']}
+                                paint={{
+                                    "line-color": "#1d4ed8",
+                                    "line-width": 2.5,
+                                    "line-opacity": 0.9,
+                                }}/>
+                            {/* Direction arrows along strips — repeats a ▶ glyph
+                                every 30 px so the operator can see the
+                                boustrophedon orientation. symbol-placement:line
+                                rotates each arrow to follow the local tangent. */}
+                            <Layer type={"symbol"} id={"plan-preview-arrows"}
+                                filter={['==', ['get', 'kind'], 'strip']}
+                                layout={{
+                                    "symbol-placement": "line",
+                                    "symbol-spacing": 30,
+                                    "text-field": "▶",
+                                    "text-size": 14,
+                                    "text-keep-upright": false,
+                                }}
+                                paint={{
+                                    "text-color": "#1e40af",
+                                    "text-halo-color": "#ffffff",
+                                    "text-halo-width": 1.2,
+                                }}/>
                         </Source>
                     )}
                     <Source type={"geojson"} id={"lidar"} data={lidarCollection}>

@@ -957,6 +957,13 @@ func PostSettingsYAML(r *gin.RouterGroup, dbProvider types.IDBProvider, rosProvi
 			existing[key] = value
 		}
 
+		// Debug: surface the resolved namespace for the live-tunable keys so
+		// we can confirm x-yaml-node hints are honoured. Logged once per save.
+		debugKeys := []string{"outline_passes", "outline_offset", "path_spacing", "headland_width", "mow_angle_offset_deg"}
+		for _, k := range debugKeys {
+			log.Printf("PostSettingsYAML: nodeMappings[%q] = %q (in payload: %v)", k, nodeMappings[k], payload[k])
+		}
+
 		// Nest back into ROS2 YAML structure
 		nested := nestToROS2YAML(existing, nodeMappings, existingYAML)
 

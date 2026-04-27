@@ -480,13 +480,35 @@
           </Fallback>
           </ReactiveSequence>
 
-          <!-- Mowing complete — dock -->
-          <SetMowerEnabled enabled="false"/>
-          <PublishHighLevelStatus state="1" state_name="MOWING_COMPLETE"/>
-          <SaveObstacles/>
-          <DockRobot dock_id="home_dock" dock_type="simple_charging_dock"/>
-          <PublishHighLevelStatus state="1" state_name="IDLE_DOCKED"/>
-          <ClearCommand/>
+          <!-- Mowing complete — dock.
+               Wrapped in a ReactiveFallback with IsCommand-preempt guards
+               (mirrors HomeSequence pattern at line 502+). Without this,
+               the auto-dock retries internally for minutes if RTK flaps
+               or the dock approach fails, and the BT silently swallows
+               every HighLevelControl the user sends — the GUI Home button
+               does nothing until DockRobot times out.
+
+               How preemption works: any of the three IsCommand checks
+               returns SUCCESS the moment the user sends HOME / RECORD /
+               MANUAL_MOW. ReactiveFallback returns SUCCESS, halts the
+               running auto-dock Sequence via onHalted (cancels the
+               opennav_docking action), MowingSequence completes, and on
+               the next tick MainLogic re-evaluates and dispatches to the
+               matching branch (HomeSequence / RecordingSequence /
+               ManualMowingSequence). Closes #49. -->
+          <ReactiveFallback name="MowingCompleteAutoDockOrUserCommand">
+            <IsCommand command="2"/>  <!-- HOME -->
+            <IsCommand command="3"/>  <!-- RECORD_AREA -->
+            <IsCommand command="7"/>  <!-- MANUAL_MOW -->
+            <Sequence name="MowingCompleteAutoDock">
+              <SetMowerEnabled enabled="false"/>
+              <PublishHighLevelStatus state="1" state_name="MOWING_COMPLETE"/>
+              <SaveObstacles/>
+              <DockRobot dock_id="home_dock" dock_type="simple_charging_dock"/>
+              <PublishHighLevelStatus state="1" state_name="IDLE_DOCKED"/>
+              <ClearCommand/>
+            </Sequence>
+          </ReactiveFallback>
         </Sequence>
 
         <!-- ============================================================

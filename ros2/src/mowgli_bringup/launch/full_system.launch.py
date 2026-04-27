@@ -181,6 +181,7 @@ def generate_launch_description() -> LaunchDescription:
         output="screen",
         parameters=[
             map_params,
+            robot_config,
             {"use_sim_time": use_sim_time},
         ],
     )

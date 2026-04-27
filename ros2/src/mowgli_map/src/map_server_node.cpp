@@ -3028,14 +3028,15 @@ void MapServerNode::on_preview_plan(
   RCLCPP_INFO(get_logger(),
               "PreviewPlan area=%u: %u strips, %zu strip-poses, "
               "%zu outline-poses, diag=%.2fm strip-inset=%.2fm "
-              "outline-inset=%.2fm angle=%.1f°",
+              "outline-offset=%.2fm passes=%d angle=%.1f°",
               req->area_index,
               res->num_strips,
               res->strip_plan.poses.size(),
               res->outline_path.poses.size(),
               diag,
               effective_inset,
-              outline_inset,
+              outline_offset_,
+              outline_passes_,
               res->mow_angle_deg);
 }
 

@@ -3158,41 +3158,19 @@ nav_msgs::msg::Path MapServerNode::compute_outline_path(size_t area_index) const
   // configured overlap (clamped to a minimum so we always make progress).
   const double pass_step = std::max(0.02, mower_width_ - outline_overlap_);
 
-  for (int pass = 0; pass < outline_passes_; ++pass)
+  // Helper: densify one offset polygon (closed loop) into the path. Splits
+  // the per-edge sample emission and the loop-close vertex append so the
+  // outer-area pass and each obstacle pass share the same code.
+  auto append_loop_to_path = [&](const std::vector<geometry_msgs::msg::Point32>& pts)
   {
-    // outline_offset is the gap from the OUTSIDE EDGE of the blade to
-    // the polygon boundary on the very first pass. Subsequent passes
-    // step inward by mower_width_ - overlap. The CENTERLINE of the
-    // blade therefore sits at outline_offset_ + mower_width_/2 (pass 0)
-    // and incrementally further inside thereafter.
-    const double inset = outline_offset_ + mower_width_ * 0.5 +
-                         static_cast<double>(pass) * pass_step;
-
-    const auto offset_pts = offset_polygon_inward(area.polygon.points, inset);
-    if (offset_pts.size() < 3)
-    {
-      break;  // polygon collapsed — further inward passes would be empty
-    }
-
-    const std::size_t m = offset_pts.size();
-    // Iterate exactly once around the offset polygon: edges 0→1, 1→2, …,
-    // (m-1)→0. Each edge is densified at sample_step except for the very
-    // last sample (t<1.0) so we don't emit duplicate vertices at the
-    // shared endpoint between consecutive edges. After the loop, append
-    // offset_pts[0] one more time to close the loop cleanly — without
-    // that, the FollowPath action ends one sample short of the start
-    // vertex.
-    //
-    // Earlier draft used `i <= m` plus an `if (i == m)` close branch,
-    // which emitted edge 0 a second time AND then jumped back to
-    // offset_pts[0] — producing a long diagonal at the end of the path
-    // (#50 phase 2 regression observed 2026-04-27).
-    for (std::size_t i = 0; i < m; ++i)
+    if (pts.size() < 3) return;
+    const std::size_t mn = pts.size();
+    for (std::size_t i = 0; i < mn; ++i)
     {
       const std::size_t a = i;
-      const std::size_t b = (i + 1) % m;
-      const double dx = offset_pts[b].x - offset_pts[a].x;
-      const double dy = offset_pts[b].y - offset_pts[a].y;
+      const std::size_t b = (i + 1) % mn;
+      const double dx = pts[b].x - pts[a].x;
+      const double dy = pts[b].y - pts[a].y;
       const double seg_len = std::hypot(dx, dy);
       if (seg_len < 1e-6) continue;
       const double yaw = std::atan2(dy, dx);
@@ -3206,26 +3184,65 @@ nav_msgs::msg::Path MapServerNode::compute_outline_path(size_t area_index) const
         const double t = static_cast<double>(s) / static_cast<double>(n_samples);
         geometry_msgs::msg::PoseStamped pose;
         pose.header = path.header;
-        pose.pose.position.x = offset_pts[a].x + t * dx;
-        pose.pose.position.y = offset_pts[a].y + t * dy;
+        pose.pose.position.x = pts[a].x + t * dx;
+        pose.pose.position.y = pts[a].y + t * dy;
         pose.pose.position.z = 0.0;
         pose.pose.orientation.w = cy;
         pose.pose.orientation.z = sy;
         path.poses.push_back(pose);
       }
     }
-    // Close the pass loop: append a final pose at offset_pts[0]. Inherits
-    // the orientation of the last edge (m-1 → 0) so the controller has a
-    // sensible heading at the closing vertex.
     if (!path.poses.empty())
     {
       geometry_msgs::msg::PoseStamped close;
       close.header = path.header;
-      close.pose.position.x = offset_pts[0].x;
-      close.pose.position.y = offset_pts[0].y;
+      close.pose.position.x = pts[0].x;
+      close.pose.position.y = pts[0].y;
       close.pose.position.z = 0.0;
       close.pose.orientation = path.poses.back().pose.orientation;
       path.poses.push_back(close);
+    }
+  };
+
+  for (int pass = 0; pass < outline_passes_; ++pass)
+  {
+    // outline_offset is the gap from the OUTSIDE EDGE of the blade to
+    // the polygon boundary on the very first pass. Subsequent passes
+    // step inward by mower_width_ - overlap. The CENTERLINE of the
+    // blade therefore sits at outline_offset_ + mower_width_/2 (pass 0)
+    // and incrementally further inside thereafter.
+    //
+    // Polygon-outline semantics:
+    //   * Mowing area outer boundary  → INWARD offset (blade stays
+    //     inside the working area).
+    //   * Obstacle polygons inside the area (flower beds, trees,
+    //     ponds) → OUTWARD offset (blade stays clear of the
+    //     obstacle perimeter). Implemented by passing -inset to the
+    //     same offset_polygon_inward() helper, which flips the
+    //     bisector shift direction.
+    const double inset = outline_offset_ + mower_width_ * 0.5 +
+                         static_cast<double>(pass) * pass_step;
+
+    const auto offset_pts = offset_polygon_inward(area.polygon.points, inset);
+    if (offset_pts.size() < 3)
+    {
+      break;  // polygon collapsed — further inward passes would be empty
+    }
+    append_loop_to_path(offset_pts);
+
+    // For each obstacle polygon (e.g. a flower bed, tree, pond inside
+    // the mowing area) emit an OUTWARD offset loop on this same pass.
+    // The blade-edge then clears the obstacle by `inset` metres on
+    // every pass. Negative inset flips the inward shift to outward —
+    // the bisector points inward by the helper's math, multiplying by
+    // a negative magnitude shifts vertices outward by |inset|.
+    for (const auto& obstacle : area.obstacles)
+    {
+      if (obstacle.points.size() < 3) continue;
+      const auto obs_offset_pts =
+          offset_polygon_inward(obstacle.points, -inset);
+      if (obs_offset_pts.size() < 3) continue;
+      append_loop_to_path(obs_offset_pts);
     }
   }
   return path;

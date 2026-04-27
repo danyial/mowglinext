@@ -101,6 +101,14 @@ MapServerNode::MapServerNode(const rclcpp::NodeOptions& options)
   map_frame_ = declare_parameter<std::string>("map_frame", "map");
   decay_rate_per_hour_ = declare_parameter<double>("decay_rate_per_hour", 0.1);
   mower_width_ = declare_parameter<double>("mower_width", 0.18);
+  // Outline-pass settings (#50 phase 2). Wires the previously-orphaned
+  // mowgli_robot.yaml outline_passes / outline_offset / outline_overlap
+  // values into the planner — until this commit they were declared in
+  // YAML but never read by any code, leaving the GUI's
+  // Settings → Mowing → Perimeter (Outline) form non-functional.
+  outline_passes_ = declare_parameter<int>("outline_passes", 1);
+  outline_offset_ = declare_parameter<double>("outline_offset", 0.05);
+  outline_overlap_ = declare_parameter<double>("outline_overlap", 0.0);
   // Strip spacing — fall back to mower_width when unset (legacy behavior).
   // Setting smaller than mower_width adds overlap; recommended ≤0.7 ×
   // mower_width to absorb FTC tracking drift.
@@ -3001,6 +3009,15 @@ void MapServerNode::on_preview_plan(
     }
   }
 
+  // Bundle the multi-pass outline (#50 phase 2) into the same response
+  // so the GUI sees both phases (perimeter + interior strips) in one
+  // fetch. Reuses the same helper as GetOutlinePath so the preview
+  // matches what the BT will actually drive at runtime.
+  res->outline_path = compute_outline_path(req->area_index);
+  res->outline_path.header.stamp = now();
+  res->outline_inset_m =
+      static_cast<float>(outline_offset_ + mower_width_ * 0.5);
+
   res->success = true;
   res->error_message = "";
   res->num_strips = static_cast<uint32_t>(layout.strips.size());
@@ -3009,13 +3026,16 @@ void MapServerNode::on_preview_plan(
   res->mow_angle_deg = static_cast<float>(layout.mow_angle * 180.0 / M_PI);
 
   RCLCPP_INFO(get_logger(),
-              "PreviewPlan area=%u: %u strips, %zu poses, "
-              "diag=%.2fm inset=%.2fm angle=%.1f°",
+              "PreviewPlan area=%u: %u strips, %zu strip-poses, "
+              "%zu outline-poses, diag=%.2fm strip-inset=%.2fm "
+              "outline-inset=%.2fm angle=%.1f°",
               req->area_index,
               res->num_strips,
               res->strip_plan.poses.size(),
+              res->outline_path.poses.size(),
               diag,
               effective_inset,
+              outline_inset,
               res->mow_angle_deg);
 }
 
@@ -3105,6 +3125,90 @@ std::vector<geometry_msgs::msg::Point32> MapServerNode::offset_polygon_inward(
   return result;
 }
 
+// Multi-pass outline helper used by both GetOutlinePath and PreviewPlan.
+// Caller must hold map_mutex_.
+nav_msgs::msg::Path MapServerNode::compute_outline_path(size_t area_index) const
+{
+  nav_msgs::msg::Path path;
+  path.header.frame_id = map_frame_;
+  // const, can't use ros::Node::now() directly through this; the caller
+  // patches the stamp before publishing if it cares.
+
+  if (area_index >= areas_.size())
+  {
+    return path;
+  }
+  const auto& area = areas_[area_index];
+  if (area.polygon.points.size() < 3 || outline_passes_ <= 0)
+  {
+    return path;
+  }
+
+  const double sample_step = std::max(0.05, resolution_);
+  // Step between consecutive passes inward — full mower width minus the
+  // configured overlap (clamped to a minimum so we always make progress).
+  const double pass_step = std::max(0.02, mower_width_ - outline_overlap_);
+
+  for (int pass = 0; pass < outline_passes_; ++pass)
+  {
+    // outline_offset is the gap from the OUTSIDE EDGE of the blade to
+    // the polygon boundary on the very first pass. Subsequent passes
+    // step inward by mower_width_ - overlap. The CENTERLINE of the
+    // blade therefore sits at outline_offset_ + mower_width_/2 (pass 0)
+    // and incrementally further inside thereafter.
+    const double inset = outline_offset_ + mower_width_ * 0.5 +
+                         static_cast<double>(pass) * pass_step;
+
+    const auto offset_pts = offset_polygon_inward(area.polygon.points, inset);
+    if (offset_pts.size() < 3)
+    {
+      break;  // polygon collapsed — further inward passes would be empty
+    }
+
+    const std::size_t m = offset_pts.size();
+    for (std::size_t i = 0; i <= m; ++i)
+    {
+      const std::size_t a = i % m;
+      const std::size_t b = (i + 1) % m;
+      const double dx = offset_pts[b].x - offset_pts[a].x;
+      const double dy = offset_pts[b].y - offset_pts[a].y;
+      const double seg_len = std::hypot(dx, dy);
+      if (seg_len < 1e-6) continue;
+      const double yaw = std::atan2(dy, dx);
+      const double cy = std::cos(yaw / 2.0);
+      const double sy = std::sin(yaw / 2.0);
+      const std::size_t n_samples =
+          std::max(static_cast<std::size_t>(1),
+                   static_cast<std::size_t>(seg_len / sample_step));
+      for (std::size_t s = 0; s < n_samples; ++s)
+      {
+        const double t = static_cast<double>(s) / static_cast<double>(n_samples);
+        geometry_msgs::msg::PoseStamped pose;
+        pose.header = path.header;
+        pose.pose.position.x = offset_pts[a].x + t * dx;
+        pose.pose.position.y = offset_pts[a].y + t * dy;
+        pose.pose.position.z = 0.0;
+        pose.pose.orientation.w = cy;
+        pose.pose.orientation.z = sy;
+        path.poses.push_back(pose);
+      }
+      if (i == m)
+      {
+        // Close the loop on this pass with the first vertex appended.
+        geometry_msgs::msg::PoseStamped pose;
+        pose.header = path.header;
+        pose.pose.position.x = offset_pts[a].x;
+        pose.pose.position.y = offset_pts[a].y;
+        pose.pose.position.z = 0.0;
+        pose.pose.orientation.w = cy;
+        pose.pose.orientation.z = sy;
+        path.poses.push_back(pose);
+      }
+    }
+  }
+  return path;
+}
+
 void MapServerNode::on_get_outline_path(
     const mowgli_interfaces::srv::GetOutlinePath::Request::SharedPtr req,
     mowgli_interfaces::srv::GetOutlinePath::Response::SharedPtr res)
@@ -3117,96 +3221,36 @@ void MapServerNode::on_get_outline_path(
     res->error_message = "area_index out of range";
     return;
   }
-
-  const auto& area = areas_[req->area_index];
-  if (area.polygon.points.size() < 3)
+  if (areas_[req->area_index].polygon.points.size() < 3)
   {
     res->success = false;
     res->error_message = "polygon has < 3 vertices";
     return;
   }
 
-  // Default inset = mower_width/2 + 5 cm safety. The 5 cm absorbs FTC
-  // tracking error along the boundary; smaller margin produces clipping
-  // outside the polygon (boundary alert + recovery), larger margin leaves
-  // a bigger uncut perimeter band.
-  const double safety = 0.05;
-  const double inset = (req->inset_m > 0.0F)
-                           ? static_cast<double>(req->inset_m)
-                           : (mower_width_ * 0.5 + safety);
-
-  const auto offset_pts = offset_polygon_inward(area.polygon.points, inset);
-  if (offset_pts.size() < 3)
+  res->outline_path = compute_outline_path(req->area_index);
+  res->outline_path.header.stamp = now();
+  if (res->outline_path.poses.empty())
   {
     res->success = false;
-    res->error_message = "inset too large for polygon (collapsed)";
-    res->effective_inset_m = static_cast<float>(inset);
+    res->error_message = (outline_passes_ <= 0)
+                             ? "outline_passes parameter is 0 (outline disabled)"
+                             : "inset too large for polygon (collapsed)";
     return;
-  }
-
-  // Densify each edge of the offset polygon at strip resolution so the
-  // FTCController has carrot-friendly poses. Closes the loop by appending
-  // the first vertex at the end so FollowPath ends back where it started.
-  res->outline_path.header.frame_id = map_frame_;
-  res->outline_path.header.stamp = now();
-
-  const double sample_step = std::max(0.05, resolution_);
-  const std::size_t m = offset_pts.size();
-  for (std::size_t i = 0; i <= m; ++i)
-  {
-    const std::size_t a = i % m;
-    const std::size_t b = (i + 1) % m;
-    const double dx = offset_pts[b].x - offset_pts[a].x;
-    const double dy = offset_pts[b].y - offset_pts[a].y;
-    const double seg_len = std::hypot(dx, dy);
-    if (seg_len < 1e-6)
-    {
-      continue;
-    }
-    const double yaw = std::atan2(dy, dx);
-    const double cy = std::cos(yaw / 2.0);
-    const double sy = std::sin(yaw / 2.0);
-
-    const std::size_t n_samples =
-        std::max(static_cast<std::size_t>(1),
-                 static_cast<std::size_t>(seg_len / sample_step));
-    for (std::size_t s = 0; s < n_samples; ++s)
-    {
-      const double t = static_cast<double>(s) / static_cast<double>(n_samples);
-      geometry_msgs::msg::PoseStamped pose;
-      pose.header = res->outline_path.header;
-      pose.pose.position.x = offset_pts[a].x + t * dx;
-      pose.pose.position.y = offset_pts[a].y + t * dy;
-      pose.pose.position.z = 0.0;
-      pose.pose.orientation.w = cy;
-      pose.pose.orientation.z = sy;
-      res->outline_path.poses.push_back(pose);
-    }
-    if (i == m)
-    {
-      // Close the loop with the final vertex.
-      geometry_msgs::msg::PoseStamped pose;
-      pose.header = res->outline_path.header;
-      pose.pose.position.x = offset_pts[a].x;
-      pose.pose.position.y = offset_pts[a].y;
-      pose.pose.position.z = 0.0;
-      pose.pose.orientation.w = cy;
-      pose.pose.orientation.z = sy;
-      res->outline_path.poses.push_back(pose);
-    }
   }
 
   res->success = true;
   res->error_message = "";
-  res->effective_inset_m = static_cast<float>(inset);
-  res->num_vertices = static_cast<uint32_t>(offset_pts.size());
+  res->effective_inset_m = static_cast<float>(outline_offset_ + mower_width_ * 0.5);
+  res->num_vertices = static_cast<uint32_t>(areas_[req->area_index].polygon.points.size());
 
   RCLCPP_INFO(get_logger(),
-              "GetOutlinePath area=%u: inset=%.2fm, %u offset vertices, "
-              "%zu path poses",
+              "GetOutlinePath area=%u: passes=%d offset=%.2fm overlap=%.2fm "
+              "→ %zu path poses",
               req->area_index,
-              inset,
-              res->num_vertices,
+              outline_passes_,
+              outline_offset_,
+              outline_overlap_,
               res->outline_path.poses.size());
 }
 

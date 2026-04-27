@@ -174,6 +174,8 @@ type PreviewPlanRes struct {
 	ErrorMessage              string                         `json:"error_message"`
 	StripPlan                 nav.Path                       `json:"strip_plan"`
 	SegmentStarts             []uint32                       `json:"segment_starts"`
+	OutlinePath               nav.Path                       `json:"outline_path"`
+	OutlineInsetM             float32                        `json:"outline_inset_m"`
 	NumStrips                 uint32                         `json:"num_strips"`
 	PolygonDiagM              float32                        `json:"polygon_diag_m"`
 	EffectiveInsetM           float32                        `json:"effective_inset_m"`

@@ -312,6 +312,15 @@ private:
   std::vector<geometry_msgs::msg::Point32> offset_polygon_inward(
       const std::vector<geometry_msgs::msg::Point32>& poly, double inset) const;
 
+  /// Generate the multi-pass outline path for `area_index`. Encapsulates
+  /// the loop-over-passes / densify-edges logic shared between the
+  /// GetOutlinePath service and the PreviewPlan service so both stay in
+  /// sync. Pass 0 sits at outline_offset_ + mower_width_/2 inside the
+  /// polygon; subsequent passes step inward by mower_width_ - outline_-
+  /// overlap_. Returns an empty Path if the polygon collapses under the
+  /// requested inset.
+  nav_msgs::msg::Path compute_outline_path(size_t area_index) const;
+
   /// Check if a strip is sufficiently mowed (>threshold of cells done).
   bool is_strip_mowed(const Strip& strip, double threshold_pct = 0.2) const;
 
@@ -343,6 +352,17 @@ private:
   std::string map_frame_;
   double decay_rate_per_hour_;
   double mower_width_;
+  /// Outline-pass settings (#50 phase 2). Read from mowgli_robot.yaml /
+  /// MowingSettings GUI. outline_passes_ = 0 disables the perimeter
+  /// pass entirely. outline_offset_ is the gap from the OUTSIDE EDGE of
+  /// the blade to the polygon boundary, so the centerline of pass 0
+  /// sits at outline_offset_ + mower_width_/2 inside the polygon.
+  /// outline_overlap_ shrinks the step between consecutive passes
+  /// below mower_width_ — typical 0.02–0.05 m for safety against
+  /// tracking drift on uneven ground.
+  int outline_passes_{1};
+  double outline_offset_{0.05};
+  double outline_overlap_{0.0};
   std::string map_file_path_;
   std::string areas_file_path_;
   double publish_rate_;

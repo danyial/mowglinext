@@ -179,6 +179,23 @@ export const MapPage: React.FC<{compact?: boolean}> = ({compact = false}) => {
                 });
             }
 
+            // Outline pass — closed loop along the polygon edge that the BT
+            // OutlineArea node will drive BEFORE the strip plan starts. Same
+            // PreviewPlan response carries it.
+            const outlinePoses: { pose: { position: { x: number; y: number } } }[] =
+                data.outline_path?.poses ?? [];
+            if (outlinePoses.length >= 2) {
+                const coords: Position[] = outlinePoses.map((p) => {
+                    const pos = p.pose.position;
+                    return transpose(offsetX, offsetY, datum, pos.y, pos.x) as [number, number];
+                });
+                features.push({
+                    type: "Feature",
+                    properties: { kind: "outline" },
+                    geometry: { type: "LineString", coordinates: coords },
+                });
+            }
+
             setPlanPreview({ type: "FeatureCollection", features });
             console.info(
                 `Plan preview: ${data.num_strips} strips, ` +
@@ -638,7 +655,30 @@ export const MapPage: React.FC<{compact?: boolean}> = ({compact = false}) => {
                     )}
                     {planPreview && (
                         <Source type={"geojson"} id={"plan-preview"} data={planPreview}>
-                            {/* Transit segments — drawn first so strips render on top */}
+                            {/* Outline pass — drawn first so strips/transits render on top */}
+                            <Layer type={"line"} id={"plan-preview-outline"}
+                                filter={['==', ['get', 'kind'], 'outline']}
+                                paint={{
+                                    "line-color": "#16a34a",
+                                    "line-width": 3,
+                                    "line-opacity": 0.85,
+                                }}/>
+                            {/* Direction arrows along the outline pass */}
+                            <Layer type={"symbol"} id={"plan-preview-outline-arrows"}
+                                filter={['==', ['get', 'kind'], 'outline']}
+                                layout={{
+                                    "symbol-placement": "line",
+                                    "symbol-spacing": 50,
+                                    "text-field": "▶",
+                                    "text-size": 13,
+                                    "text-keep-upright": false,
+                                }}
+                                paint={{
+                                    "text-color": "#15803d",
+                                    "text-halo-color": "#ffffff",
+                                    "text-halo-width": 1.2,
+                                }}/>
+                            {/* Transit segments — orange dashed */}
                             <Layer type={"line"} id={"plan-preview-transits"}
                                 filter={['==', ['get', 'kind'], 'transit']}
                                 paint={{
@@ -647,7 +687,7 @@ export const MapPage: React.FC<{compact?: boolean}> = ({compact = false}) => {
                                     "line-opacity": 0.7,
                                     "line-dasharray": [2, 3],
                                 }}/>
-                            {/* Strips — solid blue, slightly thicker */}
+                            {/* Strips — solid blue */}
                             <Layer type={"line"} id={"plan-preview-strips"}
                                 filter={['==', ['get', 'kind'], 'strip']}
                                 paint={{
@@ -655,10 +695,7 @@ export const MapPage: React.FC<{compact?: boolean}> = ({compact = false}) => {
                                     "line-width": 2.5,
                                     "line-opacity": 0.9,
                                 }}/>
-                            {/* Direction arrows along strips — repeats a ▶ glyph
-                                every 30 px so the operator can see the
-                                boustrophedon orientation. symbol-placement:line
-                                rotates each arrow to follow the local tangent. */}
+                            {/* Direction arrows along strips */}
                             <Layer type={"symbol"} id={"plan-preview-arrows"}
                                 filter={['==', ['get', 'kind'], 'strip']}
                                 layout={{
@@ -831,7 +868,30 @@ export const MapPage: React.FC<{compact?: boolean}> = ({compact = false}) => {
                     )}
                     {planPreview && (
                         <Source type={"geojson"} id={"plan-preview"} data={planPreview}>
-                            {/* Transit segments — drawn first so strips render on top */}
+                            {/* Outline pass — drawn first so strips/transits render on top */}
+                            <Layer type={"line"} id={"plan-preview-outline"}
+                                filter={['==', ['get', 'kind'], 'outline']}
+                                paint={{
+                                    "line-color": "#16a34a",
+                                    "line-width": 3,
+                                    "line-opacity": 0.85,
+                                }}/>
+                            {/* Direction arrows along the outline pass */}
+                            <Layer type={"symbol"} id={"plan-preview-outline-arrows"}
+                                filter={['==', ['get', 'kind'], 'outline']}
+                                layout={{
+                                    "symbol-placement": "line",
+                                    "symbol-spacing": 50,
+                                    "text-field": "▶",
+                                    "text-size": 13,
+                                    "text-keep-upright": false,
+                                }}
+                                paint={{
+                                    "text-color": "#15803d",
+                                    "text-halo-color": "#ffffff",
+                                    "text-halo-width": 1.2,
+                                }}/>
+                            {/* Transit segments — orange dashed */}
                             <Layer type={"line"} id={"plan-preview-transits"}
                                 filter={['==', ['get', 'kind'], 'transit']}
                                 paint={{
@@ -840,7 +900,7 @@ export const MapPage: React.FC<{compact?: boolean}> = ({compact = false}) => {
                                     "line-opacity": 0.7,
                                     "line-dasharray": [2, 3],
                                 }}/>
-                            {/* Strips — solid blue, slightly thicker */}
+                            {/* Strips — solid blue */}
                             <Layer type={"line"} id={"plan-preview-strips"}
                                 filter={['==', ['get', 'kind'], 'strip']}
                                 paint={{
@@ -848,10 +908,7 @@ export const MapPage: React.FC<{compact?: boolean}> = ({compact = false}) => {
                                     "line-width": 2.5,
                                     "line-opacity": 0.9,
                                 }}/>
-                            {/* Direction arrows along strips — repeats a ▶ glyph
-                                every 30 px so the operator can see the
-                                boustrophedon orientation. symbol-placement:line
-                                rotates each arrow to follow the local tangent. */}
+                            {/* Direction arrows along strips */}
                             <Layer type={"symbol"} id={"plan-preview-arrows"}
                                 filter={['==', ['get', 'kind'], 'strip']}
                                 layout={{

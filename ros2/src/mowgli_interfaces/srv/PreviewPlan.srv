@@ -24,8 +24,14 @@ nav_msgs/Path strip_plan
 # colour without re-computing.
 uint32[] segment_starts
 
+# Outline pass (#50 phase 2) — the closed-loop perimeter path the BT will
+# drive BEFORE strip coverage starts. Same payload as GetOutlinePath, bundled
+# here so the GUI renders both phases of the plan in a single fetch.
+nav_msgs/Path outline_path
+float32 outline_inset_m
+
 # Diagnostic figures the operator may want to see in the GUI:
 uint32 num_strips
 float32 polygon_diag_m
-float32 effective_inset_m   # the actual inset used (after adaptive scaling)
+float32 effective_inset_m   # the actual strip-endpoint inset used (after adaptive scaling)
 float32 mow_angle_deg       # strip orientation in map frame

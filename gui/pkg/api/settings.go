@@ -42,11 +42,34 @@ const (
 )
 
 type rclParameterValue struct {
-	Type         uint8   `json:"type"`
-	BoolValue    bool    `json:"bool_value"`
-	IntegerValue int64   `json:"integer_value"`
-	DoubleValue  float64 `json:"double_value"`
-	StringValue  string  `json:"string_value"`
+	Type               uint8     `json:"type"`
+	BoolValue          bool      `json:"bool_value"`
+	IntegerValue       int64     `json:"integer_value"`
+	DoubleValue        float64   `json:"double_value"`
+	StringValue        string    `json:"string_value"`
+	// Array fields are required by rcl_interfaces/msg/ParameterValue. Leaving
+	// them out of the struct makes encoding/json omit them from the JSON
+	// payload, which causes foxglove_bridge's CDR serializer to abort with
+	// "Service failed to send a response" — rosbridge needs every field to
+	// be present even when unused.
+	ByteArrayValue     []uint8   `json:"byte_array_value"`
+	BoolArrayValue     []bool    `json:"bool_array_value"`
+	IntegerArrayValue  []int64   `json:"integer_array_value"`
+	DoubleArrayValue   []float64 `json:"double_array_value"`
+	StringArrayValue   []string  `json:"string_array_value"`
+}
+
+// newRclParameterValue allocates the empty arrays so the JSON payload sent to
+// foxglove_bridge contains the full ParameterValue message shape.
+func newRclParameterValue(t uint8) rclParameterValue {
+	return rclParameterValue{
+		Type:              t,
+		ByteArrayValue:    []uint8{},
+		BoolArrayValue:    []bool{},
+		IntegerArrayValue: []int64{},
+		DoubleArrayValue:  []float64{},
+		StringArrayValue:  []string{},
+	}
 }
 
 type rclParameter struct {
@@ -95,33 +118,26 @@ func liveTuneMapServer(ctx context.Context, rosProvider types.IRosProvider, payl
 		}
 		switch v := val.(type) {
 		case float64:
-			params = append(params, rclParameter{
-				Name:  key,
-				Value: rclParameterValue{Type: rclParamTypeDouble, DoubleValue: v},
-			})
+			pv := newRclParameterValue(rclParamTypeDouble)
+			pv.DoubleValue = v
+			params = append(params, rclParameter{Name: key, Value: pv})
 		case float32:
-			params = append(params, rclParameter{
-				Name:  key,
-				Value: rclParameterValue{Type: rclParamTypeDouble, DoubleValue: float64(v)},
-			})
+			pv := newRclParameterValue(rclParamTypeDouble)
+			pv.DoubleValue = float64(v)
+			params = append(params, rclParameter{Name: key, Value: pv})
 		case int:
-			params = append(params, rclParameter{
-				Name:  key,
-				Value: rclParameterValue{Type: rclParamTypeInteger, IntegerValue: int64(v)},
-			})
+			pv := newRclParameterValue(rclParamTypeInteger)
+			pv.IntegerValue = int64(v)
+			params = append(params, rclParameter{Name: key, Value: pv})
 		case int64:
-			params = append(params, rclParameter{
-				Name:  key,
-				Value: rclParameterValue{Type: rclParamTypeInteger, IntegerValue: v},
-			})
+			pv := newRclParameterValue(rclParamTypeInteger)
+			pv.IntegerValue = v
+			params = append(params, rclParameter{Name: key, Value: pv})
 		case json.Number:
-			// Gin/encoding-json may decode numerics as json.Number when
-			// UseNumber() is set; fall back to float64 representation.
 			if f, err := v.Float64(); err == nil {
-				params = append(params, rclParameter{
-					Name:  key,
-					Value: rclParameterValue{Type: rclParamTypeDouble, DoubleValue: f},
-				})
+				pv := newRclParameterValue(rclParamTypeDouble)
+				pv.DoubleValue = f
+				params = append(params, rclParameter{Name: key, Value: pv})
 			}
 		default:
 			log.Printf("liveTuneMapServer: unsupported type for %q: %T", key, val)
@@ -423,24 +439,62 @@ func nestToROS2YAML(flat map[string]any, nodeMappings map[string]string, existin
 		}
 	}
 
-	// Group flat params by node — fan out to every node that already hosts
-	// the key, or fall back to schema mapping for brand-new keys.
+	// Group flat params by node. Three cases:
+	//   1. Schema declares an x-yaml-node target — write to that node only, and
+	//      strip the key from any *other* node it currently lives in (migrate
+	//      legacy entries that were written under the wrong namespace before
+	//      the schema gained x-yaml-node hints).
+	//   2. No schema mapping but the key already exists in existingYAML —
+	//      fan out to every existing host so dual-block keys (e.g. datum_lat)
+	//      stay in sync.
+	//   3. Brand-new key with no mapping — fall back to "mowgli".
 	nodeParams := map[string]map[string]any{}
+	keysToStripFromNode := map[string]map[string]bool{}
 	for key, value := range flat {
-		nodes := keyHostNodes[key]
-		if len(nodes) == 0 {
-			n := "mowgli"
-			if m, ok := nodeMappings[key]; ok {
-				n = m
+		schemaTarget, hasSchema := nodeMappings[key]
+		hosts := keyHostNodes[key]
+
+		var targets []string
+		if hasSchema {
+			targets = []string{schemaTarget}
+			for _, host := range hosts {
+				if host == schemaTarget {
+					continue
+				}
+				if keysToStripFromNode[host] == nil {
+					keysToStripFromNode[host] = map[string]bool{}
+				}
+				keysToStripFromNode[host][key] = true
 			}
-			nodes = []string{n}
+		} else if len(hosts) > 0 {
+			targets = hosts
+		} else {
+			targets = []string{"mowgli"}
 		}
-		for _, n := range nodes {
+
+		for _, n := range targets {
 			if nodeParams[n] == nil {
 				nodeParams[n] = map[string]any{}
 			}
 			nodeParams[n][key] = value
 		}
+	}
+
+	// Strip keys that have been migrated to a different node so the legacy
+	// entry doesn't shadow the new one on the next read.
+	for nodeName, stripKeys := range keysToStripFromNode {
+		nodeMap, ok := result[nodeName].(map[string]any)
+		if !ok {
+			continue
+		}
+		rosParams, ok := nodeMap["ros__parameters"].(map[string]any)
+		if !ok {
+			continue
+		}
+		for k := range stripKeys {
+			delete(rosParams, k)
+		}
+		nodeMap["ros__parameters"] = rosParams
 	}
 
 	// Merge into result, preserving existing ros__parameters that aren't in flat

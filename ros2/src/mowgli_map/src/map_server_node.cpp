@@ -101,6 +101,16 @@ MapServerNode::MapServerNode(const rclcpp::NodeOptions& options)
   map_frame_ = declare_parameter<std::string>("map_frame", "map");
   decay_rate_per_hour_ = declare_parameter<double>("decay_rate_per_hour", 0.1);
   mower_width_ = declare_parameter<double>("mower_width", 0.18);
+  // Strip spacing — fall back to mower_width when unset (legacy behavior).
+  // Setting smaller than mower_width adds overlap; recommended ≤0.7 ×
+  // mower_width to absorb FTC tracking drift.
+  path_spacing_ = declare_parameter<double>("path_spacing", 0.0);
+  // Fraction of strip-centerline samples that must be marked mowed for the
+  // strip to count as done. 0.85 = traverse most of the strip end-to-end.
+  // The legacy 0.20 default skipped strips that were only side-touched
+  // during turns (mark_cells_mowed marks a mower_width/2 circle around the
+  // robot pose on every wheel-odom tick).
+  strip_mowed_threshold_ = declare_parameter<double>("strip_mowed_threshold", 0.85);
   map_file_path_ = declare_parameter<std::string>("map_file_path", "");
   areas_file_path_ = declare_parameter<std::string>("areas_file_path", "");
   publish_rate_ = declare_parameter<double>("publish_rate", 1.0);
@@ -2444,7 +2454,11 @@ void MapServerNode::ensure_strip_layout(size_t area_index)
   layout.strips.clear();
   int col = 0;
 
-  for (double x = inner_min_x + mower_width_ / 2; x <= inner_max_x; x += mower_width_)
+  // Strip step: use path_spacing_ when configured (>0), else fall back to
+  // mower_width_. path_spacing < mower_width gives overlap = safer against
+  // tracking drift; path_spacing > mower_width leaves intentional gaps.
+  const double strip_step = (path_spacing_ > 0.0) ? path_spacing_ : mower_width_;
+  for (double x = inner_min_x + strip_step / 2; x <= inner_max_x; x += strip_step)
   {
     // Find Y intersections of vertical line x=const with rotated polygon edges
     std::vector<double> y_intersections;
@@ -2528,6 +2542,11 @@ void MapServerNode::ensure_strip_layout(size_t area_index)
 
 bool MapServerNode::is_strip_mowed(const Strip& strip, double threshold_pct) const
 {
+  // The default threshold parameter (0.2) is overridden by the
+  // strip_mowed_threshold_ config knob unless the caller passes a custom
+  // value (current callsite passes nothing, so the config knob wins).
+  if (threshold_pct < 0.0)
+    threshold_pct = strip_mowed_threshold_;
   // Sample mow_progress along the strip centerline
   double dx = strip.end.x - strip.start.x;
   double dy = strip.end.y - strip.start.y;
@@ -2792,12 +2811,21 @@ void MapServerNode::on_get_next_strip(
   if (!find_next_unmowed_strip(
           req->area_index, req->robot_x, req->robot_y, strip, req->prefer_headland))
   {
-    // All strips mowed
+    // All strips done per the strip-plan. Report ACTUAL cell-coverage so
+    // the BT log is honest — previously hard-coded 100.0% which masked the
+    // strip-spacing/threshold bugs that left huge un-mowed gaps.
+    uint32_t total = 0, mowed_cells = 0, obs = 0;
+    compute_coverage_stats(req->area_index, total, mowed_cells, obs);
+    const float cell_coverage = total > 0 ? 100.0f * mowed_cells / total : 0.0f;
     res->success = true;
     res->coverage_complete = true;
-    res->coverage_percent = 100.0f;
+    res->coverage_percent = cell_coverage;
     res->strips_remaining = 0;
     res->phase = "complete";
+    RCLCPP_INFO(get_logger(),
+                "GetNextStrip: strip-plan complete — actual cell coverage %.1f%% "
+                "(%u/%u cells mowed)",
+                cell_coverage, mowed_cells, total);
     return;
   }
 

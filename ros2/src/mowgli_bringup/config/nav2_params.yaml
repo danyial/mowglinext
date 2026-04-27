@@ -542,7 +542,17 @@ local_costmap:
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
         cost_scaling_factor: 10.0
-        inflation_radius: 0.40
+        # 0.15 m (was 0.40). With keepout_filter disabled in the local costmap
+        # and FTC's check_obstacles using the obstacle_layer directly, large
+        # inflation around real LiDAR returns squeezed strip endpoints into
+        # inscribed-inflated cells (cost ≥ 253) when polygon edges + nearby
+        # obstacles compounded. Outdoor test 2026-04-27 showed FTC hitting
+        # "lethal obstacle on path" at strip start (1.98, -2.49), causing
+        # SKIP_STRIP at 31% coverage. Reducing to 0.15 m gives footprint
+        # corners cost-0 cells as long as robot is at least ~0.20 m from
+        # an inflated obstacle. collision_monitor PolygonSlow (chassis +
+        # 15 cm, slowdown_ratio 0.3) retains the real-time obstacle cushion.
+        inflation_radius: 0.15
 
 # ---------------------------------------------------------------------------
 # Map server / AMCL (unused — map->odom is published by ekf_map_node

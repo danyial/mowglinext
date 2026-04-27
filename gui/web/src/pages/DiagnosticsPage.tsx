@@ -42,7 +42,6 @@ import {useDiagnosticsSnapshot} from "../hooks/useDiagnosticsSnapshot.ts";
 import {useDiagnostics} from "../hooks/useDiagnostics.ts";
 import {useThemeMode} from "../theme/ThemeContext.tsx";
 import {useIsMobile} from "../hooks/useIsMobile";
-import {AbsolutePoseConstants} from "../types/ros.ts";
 import {useEffect, useMemo, useState} from "react";
 import {useSettings} from "../hooks/useSettings.ts";
 import {computeBatteryPercent} from "../utils/battery.ts";

@@ -89,17 +89,20 @@ type setParametersRes struct {
 	Results []rclSetParametersResult `json:"results"`
 }
 
-// liveTunableMapServerKeys lists the GUI fields that are safe to push into
-// /map_server_node/set_parameters without a node restart. Keys outside this
-// list are persisted to yaml only — the operator must restart the container
-// for them to take effect.
-var liveTunableMapServerKeys = map[string]bool{
-	"outline_passes":       true,
-	"outline_offset":       true,
-	"outline_overlap":      true,
-	"path_spacing":         true,
-	"mow_angle_offset_deg": true,
-	"headland_width":       true,
+// liveTunableMapServerKeys maps GUI fields that are safe to push into
+// /map_server_node/set_parameters to their ROS parameter type. The type must
+// match the C++ declare_parameter<T>() call exactly — sending an integer to a
+// double-typed param (or vice versa) makes the node reject the request with
+// "Service failed to send a response", because rcl validates types before the
+// callback runs. JSON numbers always arrive as float64 in Go regardless of
+// the declared schema type, so we cannot infer the ROS type from the payload.
+var liveTunableMapServerKeys = map[string]uint8{
+	"outline_passes":       rclParamTypeInteger,
+	"outline_offset":       rclParamTypeDouble,
+	"outline_overlap":      rclParamTypeDouble,
+	"path_spacing":         rclParamTypeDouble,
+	"mow_angle_offset_deg": rclParamTypeDouble,
+	"headland_width":       rclParamTypeDouble,
 }
 
 // liveTuneMapServer pushes the live-tunable subset of payload to
@@ -112,35 +115,40 @@ func liveTuneMapServer(ctx context.Context, rosProvider types.IRosProvider, payl
 	}
 	params := make([]rclParameter, 0, len(payload))
 	for key, val := range payload {
-		if !liveTunableMapServerKeys[key] {
+		paramType, ok := liveTunableMapServerKeys[key]
+		if !ok {
 			continue
 		}
+		var f float64
 		switch v := val.(type) {
 		case float64:
-			pv := newRclParameterValue(rclParamTypeDouble)
-			pv.DoubleValue = v
-			params = append(params, rclParameter{Name: key, Value: pv})
+			f = v
 		case float32:
-			pv := newRclParameterValue(rclParamTypeDouble)
-			pv.DoubleValue = float64(v)
-			params = append(params, rclParameter{Name: key, Value: pv})
+			f = float64(v)
 		case int:
-			pv := newRclParameterValue(rclParamTypeInteger)
-			pv.IntegerValue = int64(v)
-			params = append(params, rclParameter{Name: key, Value: pv})
+			f = float64(v)
 		case int64:
-			pv := newRclParameterValue(rclParamTypeInteger)
-			pv.IntegerValue = v
-			params = append(params, rclParameter{Name: key, Value: pv})
+			f = float64(v)
 		case json.Number:
-			if f, err := v.Float64(); err == nil {
-				pv := newRclParameterValue(rclParamTypeDouble)
-				pv.DoubleValue = f
-				params = append(params, rclParameter{Name: key, Value: pv})
+			parsed, err := v.Float64()
+			if err != nil {
+				log.Printf("liveTuneMapServer: cannot parse json.Number for %q: %v", key, err)
+				continue
 			}
+			f = parsed
 		default:
 			log.Printf("liveTuneMapServer: unsupported type for %q: %T", key, val)
+			continue
 		}
+
+		pv := newRclParameterValue(paramType)
+		switch paramType {
+		case rclParamTypeInteger:
+			pv.IntegerValue = int64(f)
+		case rclParamTypeDouble:
+			pv.DoubleValue = f
+		}
+		params = append(params, rclParameter{Name: key, Value: pv})
 	}
 	if len(params) == 0 {
 		return

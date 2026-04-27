@@ -271,17 +271,22 @@ class MowSessionMonitor(Node):
 
         # GPS + dock heading
         sub("/gps/fix", NavSatFix, self._gps_fix_cb, QOS_SENSOR)
-        sub("/gps/absolute_pose", PoseWithCovarianceStamped, self._gps_abs_cb, QOS_RELIABLE)
         sub("/gnss/heading", Imu, self._gnss_heading_cb, QOS_RELIABLE)
 
-        # BT + hardware state — imported lazily so we only require the
-        # mowgli_interfaces package when those topics are available
+        # BT + hardware state + ENU-projected GPS pose — imported lazily so we
+        # only require the mowgli_interfaces package when those topics are
+        # available. /gps/absolute_pose lives here because it carries the
+        # mowgli-specific AbsolutePose message; subscribing with the wrong
+        # type pollutes the topic graph (multi-typed) and breaks foxglove_-
+        # bridge / GUI subscribers downstream.
         try:
             from mowgli_interfaces.msg import (  # type: ignore
+                AbsolutePose,
                 Emergency,
                 HighLevelStatus,
                 Status as HwStatus,
             )
+            sub("/gps/absolute_pose", AbsolutePose, self._gps_abs_cb, QOS_RELIABLE)
             sub("/behavior_tree_node/high_level_status", HighLevelStatus, self._bt_cb)
             sub("/hardware_bridge/status", HwStatus, self._hw_status_cb)
             sub("/hardware_bridge/emergency", Emergency, self._emergency_cb)
@@ -424,7 +429,9 @@ class MowSessionMonitor(Node):
                 self.rtk_cov_check_pending = True
                 self.rtk_fixed_arrivals += 1
 
-    def _gps_abs_cb(self, msg: PoseWithCovarianceStamped) -> None:
+    def _gps_abs_cb(self, msg) -> None:
+        # msg is mowgli_interfaces/AbsolutePose. Type hint omitted because the
+        # import is lazy and may not be available at module-import time.
         with self.state_lock:
             s = self.state
             s.gps_abs_x = msg.pose.pose.position.x

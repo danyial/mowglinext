@@ -324,8 +324,17 @@ export function useMapStreams({
                         imageData.data[canvasIdx + 1] = 60;
                         imageData.data[canvasIdx + 2] = 60;
                         imageData.data[canvasIdx + 3] = 160;
+                    } else if (val === 0) {
+                        // Mowed: dark green, semi-transparent so the basemap
+                        // shows through and the strip-shape is visible as
+                        // mowing progresses. Alpha slightly below to-mow so
+                        // not-yet-mowed cells stay the visual focus.
+                        imageData.data[canvasIdx] = 60;
+                        imageData.data[canvasIdx + 1] = 130;
+                        imageData.data[canvasIdx + 2] = 60;
+                        imageData.data[canvasIdx + 3] = 130;
                     } else {
-                        // 0 (mowed), -1 (unknown), anything else: transparent
+                        // -1 (unknown / outside polygon), anything else: transparent
                         imageData.data[canvasIdx] = 0;
                         imageData.data[canvasIdx + 1] = 0;
                         imageData.data[canvasIdx + 2] = 0;

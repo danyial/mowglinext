@@ -3049,10 +3049,44 @@ void MapServerNode::on_preview_plan(
 // polygon — collision_monitor catches the rest at runtime.
 // ─────────────────────────────────────────────────────────────────────────────
 std::vector<geometry_msgs::msg::Point32> MapServerNode::offset_polygon_inward(
-    const std::vector<geometry_msgs::msg::Point32>& poly, double inset) const
+    const std::vector<geometry_msgs::msg::Point32>& poly_in, double inset) const
 {
+  // Inset == 0 is a no-op (returns the polygon unchanged). Negative inset
+  // is an outward offset (used for obstacle outlines, see compute_outline_-
+  // path); both are valid signs for the bisector math below.
+  if (poly_in.size() < 3 || std::abs(inset) < 1e-9)
+  {
+    return poly_in;
+  }
+
+  // Dedupe consecutive duplicate vertices and any explicit closing vertex
+  // (some upstream sources — e.g. the area-recording / polygon DB —
+  // append a copy of the first vertex at the end). Zero-length edges
+  // between duplicates would force the bisector code to skip the
+  // adjacent vertex, observed live 2026-04-27 to drop V0 from a
+  // 4-corner mowing polygon and produce a 3-vertex triangle outline
+  // (the X-shape user reported in the plan-preview screenshot).
+  std::vector<geometry_msgs::msg::Point32> poly;
+  poly.reserve(poly_in.size());
+  for (const auto& p : poly_in)
+  {
+    if (!poly.empty() &&
+        std::abs(poly.back().x - p.x) < 1e-6 &&
+        std::abs(poly.back().y - p.y) < 1e-6)
+    {
+      continue;
+    }
+    poly.push_back(p);
+  }
+  if (poly.size() >= 2 &&
+      std::abs(poly.back().x - poly.front().x) < 1e-6 &&
+      std::abs(poly.back().y - poly.front().y) < 1e-6)
+  {
+    poly.pop_back();
+  }
+
   const std::size_t n = poly.size();
-  if (n < 3 || inset <= 0.0)
+  if (n < 3)
   {
     return poly;
   }

@@ -2456,20 +2456,35 @@ void MapServerNode::ensure_strip_layout(size_t area_index)
   }
 
   // ── 3. Inset and scan ─────────────────────────────────────────────────────
-  // Adaptive boundary inset: scale the safety inset with polygon size so the
-  // 0.5 m default doesn't eat most of small areas. For a 14 m² polygon the
-  // unscaled 0.5 m inset removes ~57% of the area from strip generation,
-  // leaving the polygon edge band entirely unmowed (closes #50 phase 1).
-  // Formula: clamp(diag * 0.05, 0.15, strip_boundary_margin_m_):
-  //   * 0.05 × diag — mild fraction; for a 6 m diag polygon yields 0.30 m,
-  //     for 20 m yields 1.0 m capped to strip_boundary_margin_m_ (0.5 m).
-  //   * Lower floor 0.15 m — absolute safety minimum so even tiny polygons
-  //     keep some buffer against FTC overshoot at strip endpoints.
+  // Adaptive boundary inset: scale the safety inset with polygon size and
+  // tool width so the 0.5 m default doesn't eat most of small areas. For a
+  // 14 m² polygon the unscaled 0.5 m inset removes ~57 % of the area from
+  // strip generation, leaving the polygon edge band entirely unmowed
+  // (closes #50 phase 1).
+  //
+  // Formula:  inset = clamp(diag * 0.05, blade_floor, strip_boundary_margin_m_)
+  // where blade_floor = mower_width_/2 + 0.05 m — same expression as the
+  // outline-pass inset default (#50 phase 2). Components:
+  //
+  //   * 0.05 × diag — polygon-size term. 6 m diag → 0.30 m. 20 m diag →
+  //     1.0 m capped to strip_boundary_margin_m_ (0.5 m default).
+  //   * blade_floor = mower_width/2 + 0.05 m — tool-width safety floor
+  //     so the blade physically stays inside the polygon. Earlier
+  //     revision used a hard-coded 0.15 m which only happened to match
+  //     the Yardforce 500's 0.18 m blade. For a 0.30 m blade that floor
+  //     would be too tight; for a 0.10 m blade unnecessarily wasteful.
   //   * Upper cap strip_boundary_margin_m_ — never exceed the user-tuned
-  //     value (0.5 m default), preserving the original behaviour on large
+  //     value (0.5 m default), preserving original behaviour on large
   //     gardens where the design margin is correct.
+  //
+  // Note this is the safety inset for STRIP ENDPOINTS specifically (FTC
+  // tracking-error tolerance, RTK noise margin). The OUTLINE pass uses
+  // its own dedicated inset (mower_width/2 + 0.05 m) because the
+  // physical constraint there is "blade stays inside the polygon",
+  // which is purely tool-radius-driven and does not need diag scaling.
   const double diag = std::hypot(max_x - min_x, max_y - min_y);
-  double inset = std::clamp(diag * 0.05, 0.15, strip_boundary_margin_m_);
+  const double blade_floor = mower_width_ * 0.5 + 0.05;
+  double inset = std::clamp(diag * 0.05, blade_floor, strip_boundary_margin_m_);
   double inner_min_x = min_x + inset;
   double inner_max_x = max_x - inset;
 
@@ -2954,8 +2969,9 @@ void MapServerNode::on_preview_plan(
     max_y = std::max(max_y, static_cast<double>(p.y));
   }
   const double diag = std::hypot(max_x - min_x, max_y - min_y);
+  const double blade_floor = mower_width_ * 0.5 + 0.05;
   const double effective_inset =
-      std::clamp(diag * 0.05, 0.15, strip_boundary_margin_m_);
+      std::clamp(diag * 0.05, blade_floor, strip_boundary_margin_m_);
 
   // Concatenate every strip's centerline samples into a single Path. Each
   // strip becomes a contiguous run of poses; segment_starts[i] points at

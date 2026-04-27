@@ -21,7 +21,9 @@ func setupSettingsRouter(dbProvider types.IDBProvider) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
 	group := r.Group("/api")
-	SettingsRoutes(group, dbProvider)
+	// Tests don't exercise the live-tuning side-effect; pass the standard mock
+	// ros provider so SettingsRoutes can wire PostSettingsYAML.
+	SettingsRoutes(group, dbProvider, &types.MockRosProvider{})
 	return r
 }
 

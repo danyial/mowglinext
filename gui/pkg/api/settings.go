@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -19,14 +20,134 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-func SettingsRoutes(r *gin.RouterGroup, dbProvider types.IDBProvider) {
+func SettingsRoutes(r *gin.RouterGroup, dbProvider types.IDBProvider, rosProvider types.IRosProvider) {
 	GetSettings(r, dbProvider)
 	PostSettings(r, dbProvider)
 	GetSettingsSchema(r, dbProvider)
 	GetSettingsYAML(r, dbProvider)
-	PostSettingsYAML(r, dbProvider)
+	PostSettingsYAML(r, dbProvider, rosProvider)
 	GetSettingsStatus(r, dbProvider)
 	PostSettingsStatus(r, dbProvider)
+}
+
+// ─── rcl_interfaces/srv/SetParameters ad-hoc structs ─────────────────────────
+// Generated structs aren't shipped for rcl_interfaces — we only need this one
+// service so we declare the request shape inline. JSON tags match the ROS2
+// rosbridge wire format (snake_case fields).
+
+const (
+	rclParamTypeBool    = 1
+	rclParamTypeInteger = 2
+	rclParamTypeDouble  = 3
+)
+
+type rclParameterValue struct {
+	Type         uint8   `json:"type"`
+	BoolValue    bool    `json:"bool_value"`
+	IntegerValue int64   `json:"integer_value"`
+	DoubleValue  float64 `json:"double_value"`
+	StringValue  string  `json:"string_value"`
+}
+
+type rclParameter struct {
+	Name  string            `json:"name"`
+	Value rclParameterValue `json:"value"`
+}
+
+type setParametersReq struct {
+	Parameters []rclParameter `json:"parameters"`
+}
+
+type rclSetParametersResult struct {
+	Successful bool   `json:"successful"`
+	Reason     string `json:"reason"`
+}
+
+type setParametersRes struct {
+	Results []rclSetParametersResult `json:"results"`
+}
+
+// liveTunableMapServerKeys lists the GUI fields that are safe to push into
+// /map_server_node/set_parameters without a node restart. Keys outside this
+// list are persisted to yaml only — the operator must restart the container
+// for them to take effect.
+var liveTunableMapServerKeys = map[string]bool{
+	"outline_passes":       true,
+	"outline_offset":       true,
+	"outline_overlap":      true,
+	"path_spacing":         true,
+	"mow_angle_offset_deg": true,
+	"headland_width":       true,
+}
+
+// liveTuneMapServer pushes the live-tunable subset of payload to
+// /map_server_node/set_parameters. Errors are logged but not returned —
+// yaml-write has already persisted the values, so the next restart will
+// pick them up even if the live update fails (e.g. node not running).
+func liveTuneMapServer(ctx context.Context, rosProvider types.IRosProvider, payload map[string]any) {
+	if rosProvider == nil {
+		return
+	}
+	params := make([]rclParameter, 0, len(payload))
+	for key, val := range payload {
+		if !liveTunableMapServerKeys[key] {
+			continue
+		}
+		switch v := val.(type) {
+		case float64:
+			params = append(params, rclParameter{
+				Name:  key,
+				Value: rclParameterValue{Type: rclParamTypeDouble, DoubleValue: v},
+			})
+		case float32:
+			params = append(params, rclParameter{
+				Name:  key,
+				Value: rclParameterValue{Type: rclParamTypeDouble, DoubleValue: float64(v)},
+			})
+		case int:
+			params = append(params, rclParameter{
+				Name:  key,
+				Value: rclParameterValue{Type: rclParamTypeInteger, IntegerValue: int64(v)},
+			})
+		case int64:
+			params = append(params, rclParameter{
+				Name:  key,
+				Value: rclParameterValue{Type: rclParamTypeInteger, IntegerValue: v},
+			})
+		case json.Number:
+			// Gin/encoding-json may decode numerics as json.Number when
+			// UseNumber() is set; fall back to float64 representation.
+			if f, err := v.Float64(); err == nil {
+				params = append(params, rclParameter{
+					Name:  key,
+					Value: rclParameterValue{Type: rclParamTypeDouble, DoubleValue: f},
+				})
+			}
+		default:
+			log.Printf("liveTuneMapServer: unsupported type for %q: %T", key, val)
+		}
+	}
+	if len(params) == 0 {
+		return
+	}
+
+	req := setParametersReq{Parameters: params}
+	var res setParametersRes
+	callCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	if err := rosProvider.CallService(callCtx,
+		"/map_server_node/set_parameters",
+		&req, &res,
+		"rcl_interfaces/srv/SetParameters"); err != nil {
+		log.Printf("liveTuneMapServer: SetParameters call failed (yaml is still persisted): %v", err)
+		return
+	}
+	for i, r := range res.Results {
+		if !r.Successful {
+			log.Printf("liveTuneMapServer: param %s rejected by node: %s", params[i].Name, r.Reason)
+		}
+	}
+	log.Printf("liveTuneMapServer: pushed %d live params to map_server_node", len(params))
 }
 
 // GetSettingsStatus returns whether onboarding has been completed.
@@ -739,7 +860,7 @@ func GetSettingsYAML(r *gin.RouterGroup, dbProvider types.IDBProvider) gin.IRout
 // @Failure 400 {object} ErrorResponse
 // @Failure 500 {object} ErrorResponse
 // @Router /settings/yaml [post]
-func PostSettingsYAML(r *gin.RouterGroup, dbProvider types.IDBProvider) gin.IRoutes {
+func PostSettingsYAML(r *gin.RouterGroup, dbProvider types.IDBProvider, rosProvider types.IRosProvider) gin.IRoutes {
 	return r.POST("/settings/yaml", func(c *gin.Context) {
 		var payload map[string]any
 		if err := c.BindJSON(&payload); err != nil {
@@ -806,6 +927,12 @@ func PostSettingsYAML(r *gin.RouterGroup, dbProvider types.IDBProvider) gin.IRou
 		}
 
 		log.Printf("Saved mowgli_robot.yaml (%d bytes)", len(out)+len(header))
+
+		// Push the live-tunable subset to the running map_server_node so
+		// outline / strip changes take effect without a container restart.
+		// Errors are non-fatal — yaml is already on disk.
+		liveTuneMapServer(c.Request.Context(), rosProvider, payload)
+
 		c.JSON(200, OkResponse{})
 	})
 }

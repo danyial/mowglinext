@@ -35,7 +35,7 @@ func NewAPI(dbProvider types.IDBProvider, dockerProvider types.IDockerProvider, 
 	r.Use(static.Serve("/", static.LocalFile(string(webDirectory), false)))
 	apiGroup := r.Group("/api")
 	ConfigRoute(apiGroup, dbProvider)
-	SettingsRoutes(apiGroup, dbProvider)
+	SettingsRoutes(apiGroup, dbProvider, rosProvider)
 	ContainersRoutes(apiGroup, dockerProvider)
 	MowgliNextRoutes(apiGroup, rosProvider)
 	SetupRoutes(apiGroup, firmwareProvider)

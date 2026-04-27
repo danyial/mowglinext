@@ -2544,13 +2544,25 @@ void MapServerNode::ensure_strip_layout(size_t area_index)
       if (y_hi - y_lo < mower_width_)
         continue;
 
-      // Rotate strip endpoints back to map frame
+      // Boustrophedon ordering: alternate strip direction by column so the
+      // transit between consecutive strips is a short hop on the SAME side
+      // of the polygon, not a full traversal across it. Even columns go
+      // y_lo → y_hi; odd columns go y_hi → y_lo. Without this, every strip
+      // ends at y_hi and the next strip starts at y_lo, forcing the robot
+      // to drive the full strip length back down the polygon between every
+      // pair — observed live 2026-04-27 via the new plan-preview overlay,
+      // doubles transit distance and is the dominant reason coverage runs
+      // bleed battery without progress.
+      const bool reverse_direction = (col % 2 == 1);
+      const double start_y = reverse_direction ? y_hi : y_lo;
+      const double end_y = reverse_direction ? y_lo : y_hi;
+
       Strip strip;
-      strip.start.x = cos_back * x - sin_back * y_lo;
-      strip.start.y = sin_back * x + cos_back * y_lo;
+      strip.start.x = cos_back * x - sin_back * start_y;
+      strip.start.y = sin_back * x + cos_back * start_y;
       strip.start.z = 0.0;
-      strip.end.x = cos_back * x - sin_back * y_hi;
-      strip.end.y = sin_back * x + cos_back * y_hi;
+      strip.end.x = cos_back * x - sin_back * end_y;
+      strip.end.y = sin_back * x + cos_back * end_y;
       strip.end.z = 0.0;
       strip.column_index = col;
       layout.strips.push_back(strip);

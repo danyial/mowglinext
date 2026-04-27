@@ -640,12 +640,53 @@ func (c *Client) handleAdvertise(adv serverAdvertise) {
 }
 
 func (c *Client) handleUnadvertise(unadv serverUnadvertise) {
+	// Collect (topic, hadSubscription) for each channel being torn down,
+	// then drop the channel info under the chanMu lock. The actual
+	// re-arming of pending subscriptions happens after the lock is
+	// released, both because pendingMu/subMu are independent locks and
+	// because we want to keep the chanMu critical section minimal.
+	type torn struct {
+		topic   string
+		hadSub  bool
+	}
+	var teardown []torn
+
 	c.chanMu.Lock()
-	defer c.chanMu.Unlock()
 	for _, id := range unadv.ChannelIDs {
 		if state, ok := c.channelsByID[id]; ok {
+			teardown = append(teardown, torn{
+				topic:  state.def.Topic,
+				hadSub: state.subscriptionID != 0,
+			})
 			delete(c.channels, state.def.Topic)
 			delete(c.channelsByID, id)
+		}
+	}
+	c.chanMu.Unlock()
+
+	// If a torn-down topic still has Go subscribers (i.e. RosProvider
+	// hasn't called Unsubscribe), put it back into pendingTopics so the
+	// next advertise of that topic auto-re-subscribes. Without this, a
+	// transient unadvertise (e.g. a publisher restart, or — observed
+	// 2026-04-27 — a brief topic-type-conflict that foxglove_bridge
+	// handles by unadvertising and re-advertising) silently strands the
+	// subscription: c.channels has the new entry but pendingTopics does
+	// not include this topic, so handleAdvertise does not call
+	// subscribeTopic for it.  Result: WS frames stop arriving but the
+	// Go side still thinks it's subscribed (subscribers map is intact).
+	for _, t := range teardown {
+		c.subMu.RLock()
+		hasSubs := len(c.subscribers[t.topic]) > 0
+		c.subMu.RUnlock()
+		if !hasSubs {
+			continue
+		}
+		c.pendingMu.Lock()
+		c.pendingTopics[t.topic] = true
+		c.pendingMu.Unlock()
+		if t.hadSub {
+			logrus.WithField("topic", t.topic).
+				Info("foxglove: channel unadvertised, re-armed pending subscription")
 		}
 	}
 }

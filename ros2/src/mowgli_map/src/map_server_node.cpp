@@ -2720,49 +2720,48 @@ bool MapServerNode::find_next_unmowed_strip(
 
   int& cur_idx = current_strip_idx_[area_index];
 
-  // First call: start from the strip nearest to the robot
-  if (cur_idx < 0)
-  {
-    double nearest_dist = 1e9;
-    for (int i = 0; i < n; ++i)
-    {
-      double mid_x = (layout.strips[i].start.x + layout.strips[i].end.x) / 2;
-      double mid_y = (layout.strips[i].start.y + layout.strips[i].end.y) / 2;
-      double d = std::hypot(mid_x - robot_x, mid_y - robot_y);
-      if (d < nearest_dist)
-      {
-        nearest_dist = d;
-        cur_idx = i;
-      }
-    }
-  }
-  else
-  {
-    // Advance to next strip (sequential boustrophedon)
-    cur_idx++;
-  }
-
-  // Search forward from current index for the next unmowed strip.
-  // Skip strips that are blocked by obstacles (>50% obstacle cells) — these
-  // are treated as "frontier" strips that can't be mowed.
+  // Pick the next strip by minimising transit distance from the robot's
+  // current position to the strip's START. Smarter than the old
+  // "increment cur_idx" which happened to be optimal on convex polygons
+  // (where neighbouring column = nearest unmowed strip) but fell apart
+  // on concave polygons (L/U-shaped areas where one column carries
+  // multiple disjoint strip segments). Operator-suggested 2026-04-27
+  // after seeing the planner-preview overlay (#53) reveal the issue.
+  //
+  // On convex polygons the result is identical to column-order iteration
+  // (because the nearest unmowed strip IS the next column over once
+  // boustrophedon orientation is applied at storage time). On concave
+  // polygons it picks the geometrically-nearest unmowed strip every
+  // time, which is what the operator would intuitively expect.
+  //
+  // Strip start/end orientation is already set correctly by
+  // ensure_strip_layout (boustrophedon by column index, see comment
+  // there) — no second swap here, that would double-flip odd columns
+  // and produce a uniform-direction layout.
+  double best_dist = 1e18;
+  int best_idx = -1;
   for (int i = 0; i < n; ++i)
   {
-    int idx = (cur_idx + i) % n;
-    const auto& strip = layout.strips[idx];
-    if (!is_strip_mowed(strip) && !is_strip_blocked(strip))
+    const auto& strip = layout.strips[i];
+    if (is_strip_mowed(strip) || is_strip_blocked(strip))
+      continue;
+    const double d = std::hypot(strip.start.x - robot_x,
+                                strip.start.y - robot_y);
+    if (d < best_dist)
     {
-      cur_idx = idx;
-      out_strip = strip;
-
-      // Boustrophedon: alternate Y direction per column
-      if (idx % 2 == 1)
-        std::swap(out_strip.start, out_strip.end);
-
-      return true;
+      best_dist = d;
+      best_idx = i;
     }
   }
 
-  return false;  // All strips mowed or blocked
+  if (best_idx < 0)
+  {
+    return false;  // All strips mowed or blocked
+  }
+
+  cur_idx = best_idx;
+  out_strip = layout.strips[best_idx];
+  return true;
 }
 
 nav_msgs::msg::Path MapServerNode::strip_to_path(const Strip& strip, size_t /*area_index*/) const

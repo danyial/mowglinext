@@ -47,7 +47,8 @@ map_server_node:
     # Mowing strip angle in degrees. NaN (default) = auto-compute from
     # polygon shape (minimum bounding rectangle — strips align with the
     # longest axis to minimise turns). 0 = north-south, 90 = east-west.
-    mow_angle_deg: .nan
+    # GUI sends -1 for "auto"; the launch wrapper translates -1 → NaN.
+    mow_angle_offset_deg: .nan
 
     # Inner-boundary margin. Cells INSIDE a mowing area but within this
     # distance of the nearest edge are marked LETHAL in the keepout mask.

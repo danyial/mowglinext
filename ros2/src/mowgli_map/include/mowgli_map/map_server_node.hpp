@@ -524,6 +524,14 @@ private:
 
   // ── Timers ────────────────────────────────────────────────────────────────
   rclcpp::TimerBase::SharedPtr publish_timer_;
+
+  // ── Live parameter callback ──────────────────────────────────────────────
+  // Held as a member so the callback stays registered for the node's lifetime.
+  // Updates the cached planner parameters (outline_*, path_spacing, mow_angle,
+  // headland_width) without requiring a node restart — yaml writes from the
+  // GUI are paired with a SetParameters service call so changes take effect
+  // immediately.
+  rclcpp::node_interfaces::OnSetParametersCallbackHandle::SharedPtr param_callback_handle_;
 };
 
 }  // namespace mowgli_map

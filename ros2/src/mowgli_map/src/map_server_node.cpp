@@ -139,9 +139,17 @@ MapServerNode::MapServerNode(const rclcpp::NodeOptions& options)
   soft_boundary_margin_m_ = declare_parameter<double>("soft_boundary_margin_m", 0.10);
   boundary_recovery_offset_m_ = declare_parameter<double>("boundary_recovery_offset_m", 0.8);
   boundary_inner_margin_m_ = declare_parameter<double>("boundary_inner_margin_m", 0.3);
-  strip_boundary_margin_m_ = declare_parameter<double>("strip_boundary_margin_m", 0.5);
+  // strip_boundary_margin_m / headland_width both refer to the strip-endpoint
+  // inset (turning zone at strip ends). headland_width is the GUI-facing name
+  // and takes precedence when > 0; strip_boundary_margin_m is kept for backward
+  // compat with existing map_server.yaml deployments.
+  {
+    const double legacy_margin = declare_parameter<double>("strip_boundary_margin_m", 0.5);
+    const double gui_headland = declare_parameter<double>("headland_width", 0.0);
+    strip_boundary_margin_m_ = (gui_headland > 0.0) ? gui_headland : legacy_margin;
+  }
   mow_angle_override_deg_ =
-      declare_parameter<double>("mow_angle_deg", std::numeric_limits<double>::quiet_NaN());
+      declare_parameter<double>("mow_angle_offset_deg", std::numeric_limits<double>::quiet_NaN());
 
   // Dock approach corridor — extends the no-mow zone in front of the dock
   // so coverage strips stop before the 1.5 m straight-line alignment that
@@ -463,6 +471,77 @@ MapServerNode::MapServerNode(const rclcpp::NodeOptions& options)
                 approach_back,
                 half_width);
   }
+
+  // ── Live parameter callback ──────────────────────────────────────────────
+  // Live-tunable subset of the planner parameters. The GUI POST /settings/yaml
+  // endpoint persists to mowgli_robot.yaml AND fires a SetParameters service
+  // call with these keys, so the operator sees plan changes without waiting
+  // for a node restart. Replanning is on-demand (next /preview_plan or
+  // /get_next_strip call), so updating the cached members is sufficient.
+  param_callback_handle_ = add_on_set_parameters_callback(
+      [this](const std::vector<rclcpp::Parameter>& params)
+      {
+        rcl_interfaces::msg::SetParametersResult result;
+        result.successful = true;
+
+        for (const auto& p : params)
+        {
+          const auto& name = p.get_name();
+          if (name == "outline_passes")
+          {
+            outline_passes_ = static_cast<int>(p.as_int());
+          }
+          else if (name == "outline_offset")
+          {
+            outline_offset_ = p.as_double();
+          }
+          else if (name == "outline_overlap")
+          {
+            outline_overlap_ = p.as_double();
+          }
+          else if (name == "path_spacing")
+          {
+            path_spacing_ = p.as_double();
+          }
+          else if (name == "mow_angle_offset_deg")
+          {
+            const double v = p.as_double();
+            // GUI sentinel: -1 means "auto" (NaN drives auto-MBR in
+            // ensure_strip_layout). Any other value is interpreted as an
+            // absolute angle in degrees.
+            mow_angle_override_deg_ =
+                (v < 0.0) ? std::numeric_limits<double>::quiet_NaN() : v;
+          }
+          else if (name == "headland_width" || name == "strip_boundary_margin_m")
+          {
+            const double v = p.as_double();
+            // headland_width=0 means "use legacy strip_boundary_margin_m".
+            // For an explicit live update from the GUI we always honour the
+            // new value (treating zero as "no inset" would silently break
+            // strip endpoint placement).
+            if (v > 0.0)
+            {
+              strip_boundary_margin_m_ = v;
+            }
+          }
+        }
+
+        if (!params.empty())
+        {
+          RCLCPP_INFO(get_logger(),
+                      "Live params updated: outline_passes=%d offset=%.3f overlap=%.3f "
+                      "path_spacing=%.3f mow_angle_override=%s headland=%.3f",
+                      outline_passes_,
+                      outline_offset_,
+                      outline_overlap_,
+                      path_spacing_,
+                      std::isnan(mow_angle_override_deg_) ? "auto"
+                                                          : std::to_string(mow_angle_override_deg_).c_str(),
+                      strip_boundary_margin_m_);
+        }
+
+        return result;
+      });
 
   // ── Publish timer ────────────────────────────────────────────────────────
   const auto period_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(

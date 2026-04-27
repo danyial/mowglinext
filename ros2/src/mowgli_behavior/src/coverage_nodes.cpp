@@ -452,4 +452,187 @@ BT::NodeStatus GetNextUnmowedArea::tick()
   return BT::NodeStatus::FAILURE;
 }
 
+// ===========================================================================
+// OutlineArea — drive the polygon perimeter (offset inward) before strips
+// ===========================================================================
+
+BT::NodeStatus OutlineArea::onStart()
+{
+  auto ctx = config().blackboard->get<std::shared_ptr<BTContext>>("context");
+  auto helper = ctx->helper_node;
+
+  uint32_t area_idx = 0;
+  getInput<uint32_t>("area_index", area_idx);
+
+  if (!outline_client_)
+  {
+    outline_client_ = helper->create_client<mowgli_interfaces::srv::GetOutlinePath>(
+        "/map_server_node/get_outline_path");
+  }
+  if (!outline_client_->wait_for_service(std::chrono::seconds(2)))
+  {
+    RCLCPP_ERROR(ctx->node->get_logger(),
+                 "OutlineArea: get_outline_path service not available");
+    return BT::NodeStatus::FAILURE;
+  }
+
+  auto request = std::make_shared<mowgli_interfaces::srv::GetOutlinePath::Request>();
+  request->area_index = area_idx;
+  request->inset_m = 0.0F;  // 0 = use the recommended default in map_server
+
+  outline_future_ = outline_client_->async_send_request(request).future.share();
+  outline_received_ = false;
+  goal_sent_ = false;
+  follow_handle_.reset();
+
+  RCLCPP_INFO(ctx->node->get_logger(),
+              "OutlineArea: requested outline for area=%u", area_idx);
+  return BT::NodeStatus::RUNNING;
+}
+
+BT::NodeStatus OutlineArea::onRunning()
+{
+  auto ctx = config().blackboard->get<std::shared_ptr<BTContext>>("context");
+
+  // Step 1 — wait for the get_outline_path service response.
+  if (!outline_received_)
+  {
+    if (outline_future_.wait_for(std::chrono::milliseconds(0)) !=
+        std::future_status::ready)
+    {
+      return BT::NodeStatus::RUNNING;
+    }
+    auto resp = outline_future_.get();
+    if (!resp || !resp->success)
+    {
+      RCLCPP_WARN(ctx->node->get_logger(),
+                  "OutlineArea: get_outline_path failed%s%s",
+                  (resp && !resp->error_message.empty()) ? ": " : "",
+                  (resp && !resp->error_message.empty())
+                      ? resp->error_message.c_str()
+                      : "");
+      // Don't fail the whole tree — just skip the outline phase. The strip
+      // loop will still run; the polygon edge stays uncut as before, but
+      // the user gets a warning instead of an aborted run.
+      return BT::NodeStatus::SUCCESS;
+    }
+    if (resp->outline_path.poses.size() < 3)
+    {
+      RCLCPP_WARN(ctx->node->get_logger(),
+                  "OutlineArea: outline path too short (%zu poses), skipping",
+                  resp->outline_path.poses.size());
+      return BT::NodeStatus::SUCCESS;
+    }
+    outline_path_ = resp->outline_path;
+    outline_received_ = true;
+    RCLCPP_INFO(ctx->node->get_logger(),
+                "OutlineArea: outline received, %zu poses, inset=%.2fm",
+                outline_path_.poses.size(),
+                static_cast<double>(resp->effective_inset_m));
+  }
+
+  // Step 2 — enable blade and dispatch FollowPath.
+  if (!goal_sent_)
+  {
+    setBladeEnabled(true);
+    blade_start_time_ = std::chrono::steady_clock::now();
+
+    if (!follow_client_)
+    {
+      follow_client_ = rclcpp_action::create_client<Nav2FollowPath>(
+          ctx->node, "/follow_path");
+    }
+    if (!follow_client_->wait_for_action_server(std::chrono::seconds(5)))
+    {
+      RCLCPP_ERROR(ctx->node->get_logger(),
+                   "OutlineArea: /follow_path action not available");
+      setBladeEnabled(false);
+      return BT::NodeStatus::FAILURE;
+    }
+
+    // Wait for blade spin-up before dispatching the goal — same pattern as
+    // FollowStrip so the blade hits steady-state RPM before contact.
+    auto elapsed = std::chrono::steady_clock::now() - blade_start_time_;
+    if (elapsed < std::chrono::duration<double>(kBladeSpinupDelaySec))
+    {
+      return BT::NodeStatus::RUNNING;
+    }
+
+    Nav2FollowPath::Goal goal;
+    goal.path = outline_path_;
+    goal.controller_id = "FollowCoveragePath";
+    goal.goal_checker_id = "coverage_goal_checker";
+
+    follow_future_ = follow_client_->async_send_goal(goal);
+    goal_sent_ = true;
+
+    RCLCPP_INFO(ctx->node->get_logger(),
+                "OutlineArea: sent %zu-pose outline path to FTCController",
+                outline_path_.poses.size());
+    return BT::NodeStatus::RUNNING;
+  }
+
+  // Step 3 — track the action goal lifecycle (mirrors FollowStrip).
+  if (!follow_handle_)
+  {
+    if (follow_future_.wait_for(std::chrono::milliseconds(0)) !=
+        std::future_status::ready)
+    {
+      return BT::NodeStatus::RUNNING;
+    }
+    follow_handle_ = follow_future_.get();
+    if (!follow_handle_)
+    {
+      RCLCPP_WARN(ctx->node->get_logger(), "OutlineArea: outline goal rejected");
+      setBladeEnabled(false);
+      return BT::NodeStatus::SUCCESS;  // skip outline, continue with strips
+    }
+  }
+
+  auto status = follow_handle_->get_status();
+  if (status == action_msgs::msg::GoalStatus::STATUS_SUCCEEDED)
+  {
+    RCLCPP_INFO(ctx->node->get_logger(), "OutlineArea: outline completed");
+    follow_handle_.reset();
+    setBladeEnabled(false);
+    return BT::NodeStatus::SUCCESS;
+  }
+  if (status == action_msgs::msg::GoalStatus::STATUS_ABORTED ||
+      status == action_msgs::msg::GoalStatus::STATUS_CANCELED)
+  {
+    RCLCPP_WARN(ctx->node->get_logger(),
+                "OutlineArea: outline aborted/canceled — proceeding to strips");
+    follow_handle_.reset();
+    setBladeEnabled(false);
+    return BT::NodeStatus::SUCCESS;  // strips can still run
+  }
+  return BT::NodeStatus::RUNNING;
+}
+
+void OutlineArea::onHalted()
+{
+  if (follow_handle_)
+  {
+    follow_client_->async_cancel_goal(follow_handle_);
+  }
+  follow_handle_.reset();
+  setBladeEnabled(false);
+}
+
+void OutlineArea::setBladeEnabled(bool enabled)
+{
+  auto ctx = config().blackboard->get<std::shared_ptr<BTContext>>("context");
+  if (!blade_client_)
+  {
+    blade_client_ = ctx->node->create_client<mowgli_interfaces::srv::MowerControl>(
+        "/hardware_bridge/mower_control");
+  }
+  if (!blade_client_->wait_for_service(std::chrono::milliseconds(200)))
+    return;
+
+  auto req = std::make_shared<mowgli_interfaces::srv::MowerControl::Request>();
+  req->mow_enabled = enabled ? 1u : 0u;
+  blade_client_->async_send_request(req);
+}
+
 }  // namespace mowgli_behavior

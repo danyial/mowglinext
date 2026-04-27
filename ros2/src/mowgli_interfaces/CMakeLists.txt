@@ -43,6 +43,7 @@ set(srv_files
   "srv/GetNextStrip.srv"
   "srv/GetCoverageStatus.srv"
   "srv/PreviewPlan.srv"
+  "srv/GetOutlinePath.srv"
   "srv/AreaRecording.srv"
   "srv/CalibrateImuYaw.srv"
   "srv/GetRecoveryPoint.srv"

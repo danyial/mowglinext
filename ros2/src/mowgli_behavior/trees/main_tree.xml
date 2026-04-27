@@ -423,6 +423,17 @@
               <Repeat num_cycles="100" name="AreaLoop">
                 <Sequence name="MowOneArea">
                   <GetNextUnmowedArea area_index="{current_area_index}"/>
+                  <!-- Drive the polygon perimeter (offset inward by mower
+                       radius) BEFORE the strip plan starts so the outer
+                       boundary band gets cut. Without this the strips
+                       start from strip_boundary_margin_m inside the
+                       polygon and leave the outer ~30-50 cm uncut on
+                       every run. OutlineArea returns SUCCESS even on
+                       service / action failure so the StripLoop still
+                       runs as a fallback — preserving today's behaviour
+                       for any operator who hasn't built the new
+                       map_server image yet. Closes #50 phase 2. -->
+                  <OutlineArea area_index="{current_area_index}"/>
                   <Repeat num_cycles="500" name="StripLoop">
                     <Sequence name="GetAndMowStrip">
                       <GetNextStrip area_index="{current_area_index}"/>

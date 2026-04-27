@@ -116,6 +116,21 @@ type GetNextStripRes struct {
 	Phase                     string                         `json:"phase"`
 }
 
+// GetOutlinePathReq for mowgli_interfaces/srv/GetOutlinePath request.
+type GetOutlinePathReq struct {
+	AreaIndex                 uint32                         `json:"area_index"`
+	InsetM                    float32                        `json:"inset_m"`
+}
+
+// GetOutlinePathRes for mowgli_interfaces/srv/GetOutlinePath response.
+type GetOutlinePathRes struct {
+	Success                   bool                           `json:"success"`
+	ErrorMessage              string                         `json:"error_message"`
+	OutlinePath               nav.Path                       `json:"outline_path"`
+	EffectiveInsetM           float32                        `json:"effective_inset_m"`
+	NumVertices               uint32                         `json:"num_vertices"`
+}
+
 // GetRecoveryPointReq for mowgli_interfaces/srv/GetRecoveryPoint request (empty).
 type GetRecoveryPointReq struct{}
 

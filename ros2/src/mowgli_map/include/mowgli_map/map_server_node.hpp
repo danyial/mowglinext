@@ -48,6 +48,7 @@
 #include <mowgli_interfaces/srv/get_coverage_status.hpp>
 #include <mowgli_interfaces/srv/get_mowing_area.hpp>
 #include <mowgli_interfaces/srv/get_next_strip.hpp>
+#include <mowgli_interfaces/srv/get_outline_path.hpp>
 #include <mowgli_interfaces/srv/get_recovery_point.hpp>
 #include <mowgli_interfaces/srv/preview_plan.hpp>
 #include <mowgli_interfaces/srv/set_docking_point.hpp>
@@ -197,6 +198,13 @@ private:
   void on_preview_plan(const mowgli_interfaces::srv::PreviewPlan::Request::SharedPtr req,
                        mowgli_interfaces::srv::PreviewPlan::Response::SharedPtr res);
 
+  /// Returns a closed-loop path along the polygon boundary, offset inward
+  /// by mower_radius + safety so the BT OutlineArea node can mow the
+  /// perimeter before the strip plan starts. Phase 2 of #50.
+  void on_get_outline_path(
+      const mowgli_interfaces::srv::GetOutlinePath::Request::SharedPtr req,
+      mowgli_interfaces::srv::GetOutlinePath::Response::SharedPtr res);
+
   /// Compute a recovery pose inside the nearest mowing area.
   ///
   /// Called by the BT SoftBoundaryHandler when the robot has drifted past a
@@ -292,6 +300,17 @@ private:
 
   /// Convert a strip to a nav_msgs::Path, splitting at obstacle cells.
   nav_msgs::msg::Path strip_to_path(const Strip& strip, size_t area_index) const;
+
+  /// Compute the inward Minkowski offset of a (CCW or CW, simple) polygon
+  /// by `inset` metres. Each output vertex is the original vertex shifted
+  /// along the bisector of its two adjacent edges by `inset / sin(half-
+  /// interior-angle)`. Robust for convex polygons; concave polygons may
+  /// produce self-intersections that are tolerated as long as the
+  /// resulting boundary path stays inside the polygon — collision_monitor
+  /// catches the rest at runtime. Returns empty if polygon has < 3
+  /// vertices or all vertices collapse.
+  std::vector<geometry_msgs::msg::Point32> offset_polygon_inward(
+      const std::vector<geometry_msgs::msg::Point32>& poly, double inset) const;
 
   /// Check if a strip is sufficiently mowed (>threshold of cells done).
   bool is_strip_mowed(const Strip& strip, double threshold_pct = 0.2) const;
@@ -477,6 +496,7 @@ private:
   rclcpp::Service<mowgli_interfaces::srv::GetCoverageStatus>::SharedPtr get_coverage_status_srv_;
   rclcpp::Service<mowgli_interfaces::srv::GetRecoveryPoint>::SharedPtr get_recovery_point_srv_;
   rclcpp::Service<mowgli_interfaces::srv::PreviewPlan>::SharedPtr preview_plan_srv_;
+  rclcpp::Service<mowgli_interfaces::srv::GetOutlinePath>::SharedPtr get_outline_path_srv_;
 
   // ── TF ────────────────────────────────────────────────────────────────────
   std::shared_ptr<tf2_ros::Buffer> tf_buffer_;

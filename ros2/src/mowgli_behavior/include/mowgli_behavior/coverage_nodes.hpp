@@ -25,6 +25,7 @@
 #include "mowgli_behavior/bt_context.hpp"
 #include "mowgli_interfaces/srv/get_coverage_status.hpp"
 #include "mowgli_interfaces/srv/get_next_strip.hpp"
+#include "mowgli_interfaces/srv/get_outline_path.hpp"
 #include "mowgli_interfaces/srv/mower_control.hpp"
 #include "nav2_msgs/action/follow_path.hpp"
 #include "nav2_msgs/action/navigate_to_pose.hpp"
@@ -126,6 +127,58 @@ private:
   rclcpp_action::Client<Nav2Navigate>::SharedPtr nav_client_;
   std::shared_future<NavGoalHandle::SharedPtr> nav_future_;
   NavGoalHandle::SharedPtr nav_handle_;
+};
+
+// ---------------------------------------------------------------------------
+// OutlineArea — drive the polygon perimeter (offset inward by mower radius)
+// before strip coverage starts. Implements #50 phase 2 — without this, the
+// outer boundary band of every polygon stays uncut because strip generation
+// shrinks the polygon by strip_boundary_margin_m before scanning.
+//
+// Calls /map_server_node/get_outline_path to get a closed-loop nav_msgs/Path
+// along the offset polygon, enables the blade, then sends the path through
+// the FollowCoveragePath controller (FTC) — same controller the strip loop
+// uses, so all the existing tracking-error / collision-monitor work applies.
+// ---------------------------------------------------------------------------
+
+class OutlineArea : public BT::StatefulActionNode
+{
+public:
+  using Nav2FollowPath = nav2_msgs::action::FollowPath;
+  using FollowGoalHandle = rclcpp_action::ClientGoalHandle<Nav2FollowPath>;
+
+  OutlineArea(const std::string& name, const BT::NodeConfig& config)
+      : BT::StatefulActionNode(name, config)
+  {
+  }
+
+  static BT::PortsList providedPorts()
+  {
+    return {BT::InputPort<uint32_t>("area_index", 0u, "Mowing area index")};
+  }
+
+  BT::NodeStatus onStart() override;
+  BT::NodeStatus onRunning() override;
+  void onHalted() override;
+
+private:
+  void setBladeEnabled(bool enabled);
+
+  rclcpp::Client<mowgli_interfaces::srv::GetOutlinePath>::SharedPtr outline_client_;
+  rclcpp_action::Client<Nav2FollowPath>::SharedPtr follow_client_;
+  rclcpp::Client<mowgli_interfaces::srv::MowerControl>::SharedPtr blade_client_;
+
+  // Service-call state for /get_outline_path
+  std::shared_future<mowgli_interfaces::srv::GetOutlinePath::Response::SharedPtr> outline_future_;
+  bool outline_received_ = false;
+  nav_msgs::msg::Path outline_path_;
+
+  // FollowPath action state — mirrors FollowStrip
+  std::shared_future<FollowGoalHandle::SharedPtr> follow_future_;
+  FollowGoalHandle::SharedPtr follow_handle_;
+  bool goal_sent_ = false;
+  std::chrono::steady_clock::time_point blade_start_time_;
+  static constexpr double kBladeSpinupDelaySec = 1.5;
 };
 
 // ---------------------------------------------------------------------------

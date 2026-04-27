@@ -293,6 +293,14 @@ MapServerNode::MapServerNode(const rclcpp::NodeOptions& options)
         on_preview_plan(req, res);
       });
 
+  get_outline_path_srv_ = create_service<mowgli_interfaces::srv::GetOutlinePath>(
+      "~/get_outline_path",
+      [this](const mowgli_interfaces::srv::GetOutlinePath::Request::SharedPtr req,
+             mowgli_interfaces::srv::GetOutlinePath::Response::SharedPtr res)
+      {
+        on_get_outline_path(req, res);
+      });
+
   get_coverage_status_srv_ = create_service<mowgli_interfaces::srv::GetCoverageStatus>(
       "~/get_coverage_status",
       [this](const mowgli_interfaces::srv::GetCoverageStatus::Request::SharedPtr req,
@@ -2982,6 +2990,197 @@ void MapServerNode::on_preview_plan(
               diag,
               effective_inset,
               res->mow_angle_deg);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Polygon inward Minkowski offset (#50 phase 2). Vertex-bisector
+// implementation: for each vertex shift along the bisector of its two
+// adjacent inward normals by inset / sin(half_interior_angle). Robust on
+// convex polygons; concave polygons may produce self-intersections that
+// are tolerated as long as the resulting boundary stays inside the
+// polygon — collision_monitor catches the rest at runtime.
+// ─────────────────────────────────────────────────────────────────────────────
+std::vector<geometry_msgs::msg::Point32> MapServerNode::offset_polygon_inward(
+    const std::vector<geometry_msgs::msg::Point32>& poly, double inset) const
+{
+  const std::size_t n = poly.size();
+  if (n < 3 || inset <= 0.0)
+  {
+    return poly;
+  }
+
+  // Detect winding via shoelace. signed_area > 0: CW. < 0: CCW.
+  double signed_area = 0.0;
+  for (std::size_t i = 0; i < n; ++i)
+  {
+    const std::size_t j = (i + 1) % n;
+    signed_area += static_cast<double>(poly[j].x - poly[i].x) *
+                   static_cast<double>(poly[j].y + poly[i].y);
+  }
+  const bool is_ccw = signed_area < 0.0;
+
+  std::vector<geometry_msgs::msg::Point32> result;
+  result.reserve(n);
+
+  for (std::size_t i = 0; i < n; ++i)
+  {
+    const std::size_t prev = (i + n - 1) % n;
+    const std::size_t next = (i + 1) % n;
+
+    // Edges: previous-edge points to vertex i; next-edge leaves vertex i.
+    const double e1x = static_cast<double>(poly[i].x - poly[prev].x);
+    const double e1y = static_cast<double>(poly[i].y - poly[prev].y);
+    const double e2x = static_cast<double>(poly[next].x - poly[i].x);
+    const double e2y = static_cast<double>(poly[next].y - poly[i].y);
+
+    // Inward normal for each edge. CCW polygon: inward = rotate edge by
+    // -90° (right-hand rule on Z). CW polygon: rotate by +90°.
+    double n1x = is_ccw ? e1y : -e1y;
+    double n1y = is_ccw ? -e1x : e1x;
+    double n2x = is_ccw ? e2y : -e2y;
+    double n2y = is_ccw ? -e2x : e2x;
+
+    const double l1 = std::hypot(n1x, n1y);
+    const double l2 = std::hypot(n2x, n2y);
+    if (l1 < 1e-9 || l2 < 1e-9)
+    {
+      continue;  // zero-length edge; skip vertex
+    }
+    n1x /= l1; n1y /= l1;
+    n2x /= l2; n2y /= l2;
+
+    // Bisector of the two inward normals.
+    double bx = n1x + n2x;
+    double by = n1y + n2y;
+    const double bl = std::hypot(bx, by);
+    geometry_msgs::msg::Point32 out;
+    out.z = 0.0F;
+    if (bl < 1e-6)
+    {
+      // Near-180° corner (collinear adjacent edges) — bisector degenerate.
+      // Just shift along n1 by inset.
+      out.x = static_cast<float>(poly[i].x + n1x * inset);
+      out.y = static_cast<float>(poly[i].y + n1y * inset);
+    }
+    else
+    {
+      bx /= bl; by /= bl;
+      // sin(half-interior-angle) = bisector · normal.
+      const double sin_half = bx * n1x + by * n1y;
+      const double dist = (std::abs(sin_half) > 1e-3)
+                              ? (inset / sin_half)
+                              : inset;  // very acute corner — clamp shift
+      out.x = static_cast<float>(poly[i].x + bx * dist);
+      out.y = static_cast<float>(poly[i].y + by * dist);
+    }
+    result.push_back(out);
+  }
+  return result;
+}
+
+void MapServerNode::on_get_outline_path(
+    const mowgli_interfaces::srv::GetOutlinePath::Request::SharedPtr req,
+    mowgli_interfaces::srv::GetOutlinePath::Response::SharedPtr res)
+{
+  std::lock_guard<std::mutex> lock(map_mutex_);
+
+  if (req->area_index >= areas_.size())
+  {
+    res->success = false;
+    res->error_message = "area_index out of range";
+    return;
+  }
+
+  const auto& area = areas_[req->area_index];
+  if (area.polygon.points.size() < 3)
+  {
+    res->success = false;
+    res->error_message = "polygon has < 3 vertices";
+    return;
+  }
+
+  // Default inset = mower_width/2 + 5 cm safety. The 5 cm absorbs FTC
+  // tracking error along the boundary; smaller margin produces clipping
+  // outside the polygon (boundary alert + recovery), larger margin leaves
+  // a bigger uncut perimeter band.
+  const double safety = 0.05;
+  const double inset = (req->inset_m > 0.0F)
+                           ? static_cast<double>(req->inset_m)
+                           : (mower_width_ * 0.5 + safety);
+
+  const auto offset_pts = offset_polygon_inward(area.polygon.points, inset);
+  if (offset_pts.size() < 3)
+  {
+    res->success = false;
+    res->error_message = "inset too large for polygon (collapsed)";
+    res->effective_inset_m = static_cast<float>(inset);
+    return;
+  }
+
+  // Densify each edge of the offset polygon at strip resolution so the
+  // FTCController has carrot-friendly poses. Closes the loop by appending
+  // the first vertex at the end so FollowPath ends back where it started.
+  res->outline_path.header.frame_id = map_frame_;
+  res->outline_path.header.stamp = now();
+
+  const double sample_step = std::max(0.05, resolution_);
+  const std::size_t m = offset_pts.size();
+  for (std::size_t i = 0; i <= m; ++i)
+  {
+    const std::size_t a = i % m;
+    const std::size_t b = (i + 1) % m;
+    const double dx = offset_pts[b].x - offset_pts[a].x;
+    const double dy = offset_pts[b].y - offset_pts[a].y;
+    const double seg_len = std::hypot(dx, dy);
+    if (seg_len < 1e-6)
+    {
+      continue;
+    }
+    const double yaw = std::atan2(dy, dx);
+    const double cy = std::cos(yaw / 2.0);
+    const double sy = std::sin(yaw / 2.0);
+
+    const std::size_t n_samples =
+        std::max(static_cast<std::size_t>(1),
+                 static_cast<std::size_t>(seg_len / sample_step));
+    for (std::size_t s = 0; s < n_samples; ++s)
+    {
+      const double t = static_cast<double>(s) / static_cast<double>(n_samples);
+      geometry_msgs::msg::PoseStamped pose;
+      pose.header = res->outline_path.header;
+      pose.pose.position.x = offset_pts[a].x + t * dx;
+      pose.pose.position.y = offset_pts[a].y + t * dy;
+      pose.pose.position.z = 0.0;
+      pose.pose.orientation.w = cy;
+      pose.pose.orientation.z = sy;
+      res->outline_path.poses.push_back(pose);
+    }
+    if (i == m)
+    {
+      // Close the loop with the final vertex.
+      geometry_msgs::msg::PoseStamped pose;
+      pose.header = res->outline_path.header;
+      pose.pose.position.x = offset_pts[a].x;
+      pose.pose.position.y = offset_pts[a].y;
+      pose.pose.position.z = 0.0;
+      pose.pose.orientation.w = cy;
+      pose.pose.orientation.z = sy;
+      res->outline_path.poses.push_back(pose);
+    }
+  }
+
+  res->success = true;
+  res->error_message = "";
+  res->effective_inset_m = static_cast<float>(inset);
+  res->num_vertices = static_cast<uint32_t>(offset_pts.size());
+
+  RCLCPP_INFO(get_logger(),
+              "GetOutlinePath area=%u: inset=%.2fm, %u offset vertices, "
+              "%zu path poses",
+              req->area_index,
+              inset,
+              res->num_vertices,
+              res->outline_path.poses.size());
 }
 
 void MapServerNode::on_get_coverage_status(

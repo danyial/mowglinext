@@ -3267,9 +3267,16 @@ nav_msgs::msg::Path MapServerNode::compute_outline_path(size_t area_index) const
   }
 
   const double sample_step = std::max(0.05, resolution_);
-  // Step between consecutive passes inward — full mower width minus the
-  // configured overlap (clamped to a minimum so we always make progress).
-  const double pass_step = std::max(0.02, mower_width_ - outline_overlap_);
+  // Step between consecutive outline passes inward. We track the operator's
+  // configured strip spacing (path_spacing) so outline passes and fill strips
+  // produce matching coverage — otherwise the outline loops sit further apart
+  // than the strips they enclose and leave visible gaps at the inside edge.
+  // outline_overlap is interpreted as ADDITIONAL overlap beyond what
+  // path_spacing already provides, so a 0 value still yields strip-matching
+  // coverage. Falls back to mower_width when path_spacing is unset (legacy
+  // behaviour).
+  const double effective_strip = (path_spacing_ > 0.0) ? path_spacing_ : mower_width_;
+  const double pass_step = std::max(0.02, effective_strip - outline_overlap_);
 
   // Helper: densify one offset polygon (closed loop) into the path. Splits
   // the per-edge sample emission and the loop-close vertex append so the

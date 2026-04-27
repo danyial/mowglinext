@@ -2427,16 +2427,33 @@ void MapServerNode::ensure_strip_layout(size_t area_index)
     rotated_pts.emplace_back(rx, ry);
   }
 
-  // Bounding box of rotated polygon (X only — for scan line range)
+  // Bounding box of rotated polygon (both axes — Y range used for adaptive
+  // inset sizing below)
   double min_x = 1e9, max_x = -1e9;
+  double min_y = 1e9, max_y = -1e9;
   for (const auto& [rx, ry] : rotated_pts)
   {
     min_x = std::min(min_x, rx);
     max_x = std::max(max_x, rx);
+    min_y = std::min(min_y, ry);
+    max_y = std::max(max_y, ry);
   }
 
   // ── 3. Inset and scan ─────────────────────────────────────────────────────
-  double inset = strip_boundary_margin_m_;
+  // Adaptive boundary inset: scale the safety inset with polygon size so the
+  // 0.5 m default doesn't eat most of small areas. For a 14 m² polygon the
+  // unscaled 0.5 m inset removes ~57% of the area from strip generation,
+  // leaving the polygon edge band entirely unmowed (closes #50 phase 1).
+  // Formula: clamp(diag * 0.05, 0.15, strip_boundary_margin_m_):
+  //   * 0.05 × diag — mild fraction; for a 6 m diag polygon yields 0.30 m,
+  //     for 20 m yields 1.0 m capped to strip_boundary_margin_m_ (0.5 m).
+  //   * Lower floor 0.15 m — absolute safety minimum so even tiny polygons
+  //     keep some buffer against FTC overshoot at strip endpoints.
+  //   * Upper cap strip_boundary_margin_m_ — never exceed the user-tuned
+  //     value (0.5 m default), preserving the original behaviour on large
+  //     gardens where the design margin is correct.
+  const double diag = std::hypot(max_x - min_x, max_y - min_y);
+  double inset = std::clamp(diag * 0.05, 0.15, strip_boundary_margin_m_);
   double inner_min_x = min_x + inset;
   double inner_max_x = max_x - inset;
 
@@ -2513,7 +2530,8 @@ void MapServerNode::ensure_strip_layout(size_t area_index)
   layout.valid = true;
   RCLCPP_INFO(get_logger(),
               "Strip layout for area '%s': %zu strips, mow_angle=%.1f° (%s), "
-              "rotated bbox X=[%.2f, %.2f], inner_x=[%.2f, %.2f]",
+              "rotated bbox X=[%.2f, %.2f], inner_x=[%.2f, %.2f], "
+              "diag=%.2fm, inset=%.2fm (param=%.2fm)",
               area.name.c_str(),
               layout.strips.size(),
               layout.mow_angle * 180.0 / M_PI,
@@ -2521,7 +2539,10 @@ void MapServerNode::ensure_strip_layout(size_t area_index)
               min_x,
               max_x,
               inner_min_x,
-              inner_max_x);
+              inner_max_x,
+              diag,
+              inset,
+              strip_boundary_margin_m_);
   if (!layout.strips.empty())
   {
     const auto& first = layout.strips.front();

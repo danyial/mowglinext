@@ -148,6 +148,23 @@ type MowerControlRes struct {
 	Success                   bool                           `json:"success"`
 }
 
+// PreviewPlanReq for mowgli_interfaces/srv/PreviewPlan request.
+type PreviewPlanReq struct {
+	AreaIndex                 uint32                         `json:"area_index"`
+}
+
+// PreviewPlanRes for mowgli_interfaces/srv/PreviewPlan response.
+type PreviewPlanRes struct {
+	Success                   bool                           `json:"success"`
+	ErrorMessage              string                         `json:"error_message"`
+	StripPlan                 nav.Path                       `json:"strip_plan"`
+	SegmentStarts             []uint32                       `json:"segment_starts"`
+	NumStrips                 uint32                         `json:"num_strips"`
+	PolygonDiagM              float32                        `json:"polygon_diag_m"`
+	EffectiveInsetM           float32                        `json:"effective_inset_m"`
+	MowAngleDeg               float32                        `json:"mow_angle_deg"`
+}
+
 // SetDockingPointReq for mowgli_interfaces/srv/SetDockingPoint request.
 type SetDockingPointReq struct {
 	DockingPose               geometry.Pose                  `json:"docking_pose"`

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/cedbossneo/mowglinext/pkg/msgs/geometry"
@@ -32,6 +33,38 @@ func MowgliNextRoutes(r *gin.RouterGroup, provider types.IRosProvider) {
 	ReplaceMapRoute(group, provider)
 	SubscriberRoute(group, provider)
 	PublisherRoute(group, provider)
+	PreviewPlanRoute(group, provider)
+}
+
+// PreviewPlanRoute returns the static strip-plan preview for an area as JSON
+// so the GUI can render it as a polyline overlay before the operator presses
+// Start. Backed by /map_server_node/preview_plan service (#53 phase A).
+//
+// @Router /mowglinext/preview-plan/:area_index [get]
+func PreviewPlanRoute(group *gin.RouterGroup, provider types.IRosProvider) {
+	group.GET("/preview-plan/:area_index", func(c *gin.Context) {
+		idxStr := c.Param("area_index")
+		idx, err := strconv.ParseUint(idxStr, 10, 32)
+		if err != nil {
+			c.JSON(400, ErrorResponse{Error: "invalid area_index: " + err.Error()})
+			return
+		}
+		req := mowgli.PreviewPlanReq{AreaIndex: uint32(idx)}
+		var res mowgli.PreviewPlanRes
+		err = provider.CallService(c.Request.Context(),
+			"/map_server_node/preview_plan",
+			&req, &res,
+			"mowgli_interfaces/srv/PreviewPlan")
+		if err != nil {
+			c.JSON(500, ErrorResponse{Error: err.Error()})
+			return
+		}
+		if !res.Success {
+			c.JSON(500, ErrorResponse{Error: res.ErrorMessage})
+			return
+		}
+		c.JSON(200, res)
+	})
 }
 
 // AddMapAreaRoute add a map area

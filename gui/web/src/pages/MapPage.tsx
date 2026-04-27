@@ -112,6 +112,73 @@ export const MapPage: React.FC<{compact?: boolean}> = ({compact = false}) => {
 
     const [mowingAreas, setMowingAreas] = useState<{ key: string, label: string, feat: Feature }[]>([])
 
+    // Plan-preview overlay state (#53 phase A). Toggled from MapToolbar; the
+    // GeoJSON is fetched on demand so the overlay isn't repainted while the
+    // robot is actively mowing — this is a static "what will happen" view,
+    // not a live tracker. The fetch hits /api/mowglinext/preview-plan/<idx>
+    // for the currently selected mowing area.
+    const [showPlanPreview, setShowPlanPreview] = useState<boolean>(false);
+    const [planPreview, setPlanPreview] = useState<FeatureCollection | null>(null);
+
+    const fetchPlanPreview = useCallback(async () => {
+        // Pick the first mowing area's index (mowingAreas comes from
+        // map_server_node and is already sorted). We could later expose a
+        // dropdown for multi-area gardens.
+        const first = mowingAreas[0];
+        const areaIndex = (first?.feat?.properties?.index ?? 0) as number;
+        try {
+            const resp = await fetch(`/api/mowglinext/preview-plan/${areaIndex}`);
+            if (!resp.ok) {
+                throw new Error(`preview-plan HTTP ${resp.status}`);
+            }
+            const data = await resp.json();
+            const poses: { pose: { position: { x: number; y: number } } }[] =
+                data.strip_plan?.poses ?? [];
+            const segmentStarts: number[] = data.segment_starts ?? [];
+
+            // Split poses into one LineString per strip using segment_starts.
+            const features: Feature[] = [];
+            for (let i = 0; i < segmentStarts.length; i++) {
+                const start = segmentStarts[i];
+                const end = i + 1 < segmentStarts.length ? segmentStarts[i + 1] : poses.length;
+                if (end - start < 2) continue;
+                const coords: Position[] = [];
+                for (let j = start; j < end; j++) {
+                    const p = poses[j].pose.position;
+                    const ll = transpose(offsetX, offsetY, datum, p.y, p.x) as [number, number];
+                    coords.push(ll);
+                }
+                features.push({
+                    type: "Feature",
+                    properties: { strip_index: i },
+                    geometry: { type: "LineString", coordinates: coords },
+                });
+            }
+            setPlanPreview({ type: "FeatureCollection", features });
+            console.info(
+                `Plan preview: ${data.num_strips} strips, ` +
+                `polygon ${data.polygon_diag_m?.toFixed(2)} m diag, ` +
+                `inset ${data.effective_inset_m?.toFixed(2)} m, ` +
+                `angle ${data.mow_angle_deg?.toFixed(1)}°`
+            );
+        } catch (err) {
+            console.error("Plan preview fetch failed:", err);
+            notification.error({
+                message: "Plan preview failed",
+                description: (err as Error).message,
+            });
+            setShowPlanPreview(false);
+        }
+    }, [mowingAreas, offsetX, offsetY, datum, notification]);
+
+    useEffect(() => {
+        if (showPlanPreview) {
+            fetchPlanPreview();
+        } else {
+            setPlanPreview(null);
+        }
+    }, [showPlanPreview, fetchPlanPreview]);
+
     const {map, setMap, path, plan, lidarCollection, coverageCellsImage, highLevelStatus, joyStream} = useMapStreams({
         editMap,
         settings,
@@ -544,6 +611,16 @@ export const MapPage: React.FC<{compact?: boolean}> = ({compact = false}) => {
                             }}/>
                         </Source>
                     )}
+                    {planPreview && (
+                        <Source type={"geojson"} id={"plan-preview"} data={planPreview}>
+                            <Layer type={"line"} id={"plan-preview-strips"} paint={{
+                                "line-color": "#1d4ed8",
+                                "line-width": 2,
+                                "line-opacity": 0.85,
+                                "line-dasharray": [3, 2],
+                            }}/>
+                        </Source>
+                    )}
                 </Map> : <Spinner/>}
             </div>
         );
@@ -698,6 +775,16 @@ export const MapPage: React.FC<{compact?: boolean}> = ({compact = false}) => {
                             }}/>
                         </Source>
                     )}
+                    {planPreview && (
+                        <Source type={"geojson"} id={"plan-preview"} data={planPreview}>
+                            <Layer type={"line"} id={"plan-preview-strips"} paint={{
+                                "line-color": "#1d4ed8",
+                                "line-width": 2,
+                                "line-opacity": 0.85,
+                                "line-dasharray": [3, 2],
+                            }}/>
+                        </Source>
+                    )}
                     <Source type={"geojson"} id={"lidar"} data={lidarCollection}>
                         <Layer type={"circle"} id={"lidar-points"} paint={{
                             "circle-radius": 3,
@@ -798,8 +885,10 @@ export const MapPage: React.FC<{compact?: boolean}> = ({compact = false}) => {
                             mowingAreas={mowingAreas}
                             stateName={highLevelStatus.highLevelStatus.state_name}
                             emergency={highLevelStatus.highLevelStatus.emergency}
+                            showPlanPreview={showPlanPreview}
                             onEditMap={handleEditMap}
                             onToggleSatellite={() => setUseSatellite(!useSatellite)}
+                            onTogglePlanPreview={() => setShowPlanPreview(p => !p)}
                             onManualMode={handleManualMode}
                             onStopManualMode={handleStopManualMode}
                             onBackupMap={handleBackupMap}

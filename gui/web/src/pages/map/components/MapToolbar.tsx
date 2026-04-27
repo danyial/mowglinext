@@ -20,6 +20,7 @@ import {
     ThunderboltOutlined,
     CheckOutlined,
     CloseOutlined,
+    EyeOutlined,
 } from "@ant-design/icons";
 import type {MenuInfo} from "rc-menu/lib/interface";
 import AsyncButton from "../../../components/AsyncButton.tsx";
@@ -36,8 +37,10 @@ interface MapToolbarProps {
     mowingAreas: MowingAreaItem[];
     stateName?: string;
     emergency?: boolean;
+    showPlanPreview?: boolean;
     onEditMap: () => void;
     onToggleSatellite: () => void;
+    onTogglePlanPreview?: () => void;
     onManualMode: () => Promise<void>;
     onStopManualMode: () => Promise<void>;
     onBackupMap: () => void;
@@ -60,7 +63,8 @@ interface MapToolbarProps {
 
 export const MapToolbar = ({
     manualMode, useSatellite, mowingAreas, stateName, emergency,
-    onEditMap, onToggleSatellite,
+    showPlanPreview,
+    onEditMap, onToggleSatellite, onTogglePlanPreview,
     onManualMode, onStopManualMode,
     onBackupMap, onRestoreMap, onDownloadGeoJSON,
     onMowArea,
@@ -85,6 +89,7 @@ export const MapToolbar = ({
 
     const moreMenuItems: MenuProps["items"] = [
         {key: "satellite", icon: <GlobalOutlined />, label: useSatellite ? "Dark map" : "Satellite"},
+        {key: "planPreview", icon: <EyeOutlined />, label: showPlanPreview ? "Hide plan preview" : "Show plan preview"},
         {type: "divider"},
         {key: "areaRecording", icon: <AimOutlined />, label: "Area Recording"},
         {key: "mowNext", icon: <ForwardOutlined />, label: "Mow Next Area"},
@@ -108,6 +113,7 @@ export const MapToolbar = ({
     const handleMoreClick: MenuProps["onClick"] = ({key}: MenuInfo) => {
         switch (key) {
             case "satellite": onToggleSatellite(); break;
+            case "planPreview": onTogglePlanPreview?.(); break;
             case "manual": safeCall(() => onManualMode()); break;
             case "stopManual": safeCall(() => onStopManualMode()); break;
             case "areaRecording": safeCall(onAreaRecording); break;

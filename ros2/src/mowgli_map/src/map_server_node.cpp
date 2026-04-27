@@ -3081,12 +3081,20 @@ std::vector<geometry_msgs::msg::Point32> MapServerNode::offset_polygon_inward(
     const double e2x = static_cast<double>(poly[next].x - poly[i].x);
     const double e2y = static_cast<double>(poly[next].y - poly[i].y);
 
-    // Inward normal for each edge. CCW polygon: inward = rotate edge by
-    // -90° (right-hand rule on Z). CW polygon: rotate by +90°.
-    double n1x = is_ccw ? e1y : -e1y;
-    double n1y = is_ccw ? -e1x : e1x;
-    double n2x = is_ccw ? e2y : -e2y;
-    double n2y = is_ccw ? -e2x : e2x;
+    // Inward normal for each edge. For a CCW polygon (math convention:
+    // interior on the LEFT of each edge as you traverse) the inward
+    // direction is the LEFT-perpendicular: rotate (dx, dy) by +90° CCW
+    // → (-dy, dx). For a CW polygon the interior is on the RIGHT, so
+    // we want the RIGHT-perpendicular: (dy, -dx).
+    //
+    // Earlier draft had this inverted and produced an outward offset
+    // polygon, which after passing through the bisector formula made
+    // the outline path render as a self-intersecting bowtie (#50
+    // phase 2 regression observed live 2026-04-27).
+    double n1x = is_ccw ? -e1y : e1y;
+    double n1y = is_ccw ?  e1x : -e1x;
+    double n2x = is_ccw ? -e2y : e2y;
+    double n2y = is_ccw ?  e2x : -e2x;
 
     const double l1 = std::hypot(n1x, n1y);
     const double l2 = std::hypot(n2x, n2y);
@@ -3167,9 +3175,21 @@ nav_msgs::msg::Path MapServerNode::compute_outline_path(size_t area_index) const
     }
 
     const std::size_t m = offset_pts.size();
-    for (std::size_t i = 0; i <= m; ++i)
+    // Iterate exactly once around the offset polygon: edges 0→1, 1→2, …,
+    // (m-1)→0. Each edge is densified at sample_step except for the very
+    // last sample (t<1.0) so we don't emit duplicate vertices at the
+    // shared endpoint between consecutive edges. After the loop, append
+    // offset_pts[0] one more time to close the loop cleanly — without
+    // that, the FollowPath action ends one sample short of the start
+    // vertex.
+    //
+    // Earlier draft used `i <= m` plus an `if (i == m)` close branch,
+    // which emitted edge 0 a second time AND then jumped back to
+    // offset_pts[0] — producing a long diagonal at the end of the path
+    // (#50 phase 2 regression observed 2026-04-27).
+    for (std::size_t i = 0; i < m; ++i)
     {
-      const std::size_t a = i % m;
+      const std::size_t a = i;
       const std::size_t b = (i + 1) % m;
       const double dx = offset_pts[b].x - offset_pts[a].x;
       const double dy = offset_pts[b].y - offset_pts[a].y;
@@ -3193,18 +3213,19 @@ nav_msgs::msg::Path MapServerNode::compute_outline_path(size_t area_index) const
         pose.pose.orientation.z = sy;
         path.poses.push_back(pose);
       }
-      if (i == m)
-      {
-        // Close the loop on this pass with the first vertex appended.
-        geometry_msgs::msg::PoseStamped pose;
-        pose.header = path.header;
-        pose.pose.position.x = offset_pts[a].x;
-        pose.pose.position.y = offset_pts[a].y;
-        pose.pose.position.z = 0.0;
-        pose.pose.orientation.w = cy;
-        pose.pose.orientation.z = sy;
-        path.poses.push_back(pose);
-      }
+    }
+    // Close the pass loop: append a final pose at offset_pts[0]. Inherits
+    // the orientation of the last edge (m-1 → 0) so the controller has a
+    // sensible heading at the closing vertex.
+    if (!path.poses.empty())
+    {
+      geometry_msgs::msg::PoseStamped close;
+      close.header = path.header;
+      close.pose.position.x = offset_pts[0].x;
+      close.pose.position.y = offset_pts[0].y;
+      close.pose.position.z = 0.0;
+      close.pose.orientation = path.poses.back().pose.orientation;
+      path.poses.push_back(close);
     }
   }
   return path;

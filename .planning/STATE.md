@@ -1,7 +1,17 @@
 # Project state
 
 ## Current phase
-1 — Coverage Planner Rewrite (context gathered, ready for planning)
+1 — Coverage Planner Rewrite (planning complete, ready to execute — 9 plans across 5 waves)
+
+## Resume point
+- **Last completed step:** `/gsd-plan-phase 1 --auto` (verified, committed `cb464b10`)
+- **Next step:** `/gsd-execute-phase 1 --auto` in a fresh conversation (`/clear` first)
+- **Auto-chain flag persisted:** yes (`workflow._auto_chain_active=true` in `.planning/config.json`)
+- **Wave 1 plans:** 01-01 (mowgli_interfaces extensions), 01-03 (mowgli_robot.yaml + CLAUDE.md invariants)
+- **Wave 2 plans:** 01-02 (mowgli_geometry library), 01-04 (GUI integration)
+- **Wave 3 plans:** 01-05 (coverage_planner skeleton), 01-06 (map_server cleanup)
+- **Wave 4 plans:** 01-07 (planner core: validators + sweep + narrow strategies), 01-08 (BT integration)
+- **Wave 5 plans:** 01-09 (E2E sim + Pi5 hardware smoke — operator-gated checkpoint)
 
 ## Active branch
 `migrate/upstream-localization` (HEAD `c778e40c` at .planning bootstrap time)

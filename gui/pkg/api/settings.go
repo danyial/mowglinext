@@ -331,13 +331,16 @@ func extractAllKeys(schema map[string]any, keys map[string]bool) {
 	}
 }
 
-// derivedFloatKeys are yaml-on-disk numeric keys that the schema no
-// longer references but still must be float-encoded so ROS2 can read
-// them. Keep this list small — it is purely the bridge for fields
-// that were renamed/hidden from the GUI but still feed the C++ side.
-//   - path_spacing: derived from strip_overlap (#60).
-//   - headland_width: legacy field preserved from pre-#60 yamls.
-var derivedFloatKeys = []string{"path_spacing", "headland_width"}
+// derivedFloatKeys are yaml-on-disk numeric keys that may need to be
+// force-floated even when not surfaced in the current schema. Schema-
+// driven extraction catches everything in the schema, but yamls in the
+// wild can carry legacy fields (e.g. headland_width from pre-#60
+// installs) or transient states between schema commits where a field
+// has temporarily disappeared from the schema (#60 day, outline_overlap
+// briefly dropped) — both bite ROS2 with InvalidParameterTypeException
+// when yaml.v3 writes float64(0) as the bare token "0". Listed here
+// so the regex pass is belt-and-suspenders.
+var derivedFloatKeys = []string{"path_spacing", "headland_width", "outline_overlap"}
 
 // forceFloatYAML rewrites whole-number values for every schema "number"-typed
 // key so they render as YAML floats (`0.0` instead of `0`). gopkg.in/yaml.v3

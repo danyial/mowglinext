@@ -194,7 +194,7 @@ type SetDockingPointRes struct {
 
 // SetPlanningParamsReq for mowgli_interfaces/srv/SetPlanningParams request.
 type SetPlanningParamsReq struct {
-	OutlinePasses             int32                          `json:"outline_passes"`
+	OutlinePasses             float64                        `json:"outline_passes"`
 	OutlineOffset             float64                        `json:"outline_offset"`
 	OutlineOverlap            float64                        `json:"outline_overlap"`
 	PathSpacing               float64                        `json:"path_spacing"`

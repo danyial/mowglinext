@@ -8,7 +8,12 @@
 # foxglove_bridge fails to serialize the nested ParameterValue type
 # ("rosidl_typesupport_cpp not supported"), making the standard
 # parameter API unreachable from the GUI.
-int32   outline_passes        # >=0; -1 = unchanged
+# All fields are float64 even though outline_passes is conceptually integer:
+# foxglove_bridge's CDR layer chokes on mixed int32+float64 service requests
+# with "rmw_serialize: invalid data size" (works fine for the standalone
+# float64s in PreviewPlan / GetOutlinePath, breaks as soon as we mix in an
+# int32). The C++ handler casts outline_passes back to int internally.
+float64 outline_passes        # >=0 (cast to int by handler); -1 = unchanged
 float64 outline_offset        # >=0; <0 = unchanged
 float64 outline_overlap       # >=0; <0 = unchanged
 float64 path_spacing          # >0;  <=0 = unchanged

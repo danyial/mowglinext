@@ -3434,9 +3434,11 @@ void MapServerNode::on_set_planning_params(
   // cached planner parameter.
   std::vector<std::string> changed;
 
-  if (req->outline_passes >= 0)
+  // outline_passes is wire-typed as float64 (see srv comment) so we cast
+  // back to int here. Negative values are the "unchanged" sentinel.
+  if (req->outline_passes >= 0.0)
   {
-    outline_passes_ = req->outline_passes;
+    outline_passes_ = static_cast<int>(req->outline_passes);
     changed.push_back("outline_passes=" + std::to_string(outline_passes_));
   }
   if (req->outline_offset >= 0.0)

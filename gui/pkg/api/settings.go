@@ -50,10 +50,13 @@ func (f forceFloat) MarshalJSON() ([]byte, error) {
 }
 
 // setPlanningParamsLocal mirrors mowgli.SetPlanningParamsReq but uses
-// forceFloat for the doubles so we don't have to touch the generated types
-// (which would affect every other consumer of the message).
+// forceFloat for every double so we don't have to touch the generated types
+// (which would affect every other consumer of the message). All wire fields
+// are float64 even though outline_passes is conceptually integer — the
+// service IDL was switched to all-doubles to dodge a foxglove_bridge bug
+// that rejects mixed int32/float64 service requests at the rmw layer.
 type setPlanningParamsLocal struct {
-	OutlinePasses     int32      `json:"outline_passes"`
+	OutlinePasses     forceFloat `json:"outline_passes"`
 	OutlineOffset     forceFloat `json:"outline_offset"`
 	OutlineOverlap    forceFloat `json:"outline_overlap"`
 	PathSpacing       forceFloat `json:"path_spacing"`
@@ -81,7 +84,7 @@ func liveTuneMapServer(ctx context.Context, rosProvider types.IRosProvider, payl
 	// below overwrites the sentinel only if the GUI sent a value for that
 	// key, so the server-side handler knows which fields to mutate.
 	req := mowgli.SetPlanningParamsReq{
-		OutlinePasses:     -1,
+		OutlinePasses:     -1.0,
 		OutlineOffset:     -1.0,
 		OutlineOverlap:    -1.0,
 		PathSpacing:       -1.0,
@@ -109,7 +112,7 @@ func liveTuneMapServer(ctx context.Context, rosProvider types.IRosProvider, payl
 
 	if v, ok := payload["outline_passes"]; ok {
 		if f, ok2 := asFloat(v); ok2 {
-			req.OutlinePasses = int32(f)
+			req.OutlinePasses = f
 			anyChange = true
 		}
 	}
@@ -148,7 +151,7 @@ func liveTuneMapServer(ctx context.Context, rosProvider types.IRosProvider, payl
 	}
 
 	wireReq := setPlanningParamsLocal{
-		OutlinePasses:     req.OutlinePasses,
+		OutlinePasses:     forceFloat(req.OutlinePasses),
 		OutlineOffset:     forceFloat(req.OutlineOffset),
 		OutlineOverlap:    forceFloat(req.OutlineOverlap),
 		PathSpacing:       forceFloat(req.PathSpacing),

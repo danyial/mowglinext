@@ -32,6 +32,96 @@ func SettingsRoutes(r *gin.RouterGroup, dbProvider types.IDBProvider, rosProvide
 	PostSettingsStatus(r, dbProvider)
 }
 
+// asFloat64 normalizes the menagerie of numeric types that can come back
+// from JSON unmarshalling and YAML decoding into a single float64.
+func asFloat64(v any) (float64, bool) {
+	switch x := v.(type) {
+	case float64:
+		return x, true
+	case float32:
+		return float64(x), true
+	case int:
+		return float64(x), true
+	case int64:
+		return float64(x), true
+	case json.Number:
+		f, err := x.Float64()
+		return f, err == nil
+	}
+	return 0, false
+}
+
+// readToolWidth reads the operator-facing blade width from the flat
+// settings map. The flat map is expected to have schema defaults
+// merged in by extractDefaults, so tool_width is always populated when
+// this is called from a settings handler. Returns 0 if the value is
+// genuinely unset or non-numeric — the caller's downstream math will
+// then surface the misconfiguration rather than silently substitute a
+// hardcoded default.
+func readToolWidth(flat map[string]any) float64 {
+	v, ok := flat["tool_width"]
+	if !ok {
+		return 0
+	}
+	f, _ := asFloat64(v)
+	return f
+}
+
+// injectStripOverlap mutates flat in place to expose the GUI-facing
+// strip_overlap field while hiding the legacy yaml fields. Called
+// from GET handlers so the form sees only the new shape.
+//
+// When the yaml has a path_spacing value (either from a pre-#60
+// install or from a recent save), strip_overlap is back-calculated
+// from it: strip_overlap = tool_width - path_spacing. When yaml
+// has no path_spacing, the schema-default for strip_overlap (already
+// merged into flat) is left untouched.
+//
+// path_spacing and headland_width are stripped from the response
+// either way — the form has no UI for them anymore.
+func injectStripOverlap(flat map[string]any) {
+	defer delete(flat, "path_spacing")
+	defer delete(flat, "headland_width")
+	ps, ok := flat["path_spacing"]
+	if !ok {
+		return
+	}
+	psFloat, ok := asFloat64(ps)
+	if !ok {
+		return
+	}
+	tw := readToolWidth(flat)
+	overlap := tw - psFloat
+	if overlap < 0 {
+		overlap = 0
+	}
+	flat["strip_overlap"] = overlap
+}
+
+// applyMowingPatternConversion is the inverse of injectStripOverlap.
+// Called on POST handlers before yaml-write and before the live-tune
+// publish, so the on-disk yaml + the wire message keep using the
+// legacy field name (path_spacing) that the C++ planner already
+// reads. headland_width is left untouched — if the existing yaml has
+// a value for it from a pre-#60 install, the planner-side fallback
+// continues to honour it, but new saves never write or rewrite it.
+//
+//   path_spacing = toolWidth - strip_overlap
+//
+// toolWidth is passed explicitly because the request payload from
+// the GUI usually only contains the changed fields (so reading
+// tool_width directly from the payload would return 0). Caller
+// resolves it from the merged-with-defaults existing map.
+func applyMowingPatternConversion(flat map[string]any, toolWidth float64) {
+	so, ok := flat["strip_overlap"]
+	if !ok {
+		return
+	}
+	soFloat, _ := asFloat64(so)
+	flat["path_spacing"] = toolWidth - soFloat
+	delete(flat, "strip_overlap")
+}
+
 // liveTuneMapServer pushes the live-tunable subset of the settings payload
 // to /map_server_node/planning_params_in (topic). We use a topic rather
 // than rcl_interfaces/srv/SetParameters or our own SetPlanningParams
@@ -236,6 +326,14 @@ func extractAllKeys(schema map[string]any, keys map[string]bool) {
 	}
 }
 
+// derivedFloatKeys are yaml-on-disk numeric keys that the schema no
+// longer references but still must be float-encoded so ROS2 can read
+// them. Keep this list small — it is purely the bridge for fields
+// that were renamed/hidden from the GUI but still feed the C++ side.
+//   - path_spacing: derived from strip_overlap (#60).
+//   - headland_width: legacy field preserved from pre-#60 yamls.
+var derivedFloatKeys = []string{"path_spacing", "headland_width"}
+
 // forceFloatYAML rewrites whole-number values for every schema "number"-typed
 // key so they render as YAML floats (`0.0` instead of `0`). gopkg.in/yaml.v3
 // drops the trailing zero on float64 round-trip, which ROS2's parameter
@@ -243,11 +341,13 @@ func extractAllKeys(schema map[string]any, keys map[string]bool) {
 // the node on the next startup. The fix is purely syntactic — values are
 // untouched, only the on-disk representation changes.
 func forceFloatYAML(in []byte, schema map[string]any) []byte {
-	if schema == nil {
-		return in
-	}
 	keyTypes := map[string]string{}
-	extractKeyTypes(schema, keyTypes)
+	if schema != nil {
+		extractKeyTypes(schema, keyTypes)
+	}
+	for _, k := range derivedFloatKeys {
+		keyTypes[k] = "number"
+	}
 	out := string(in)
 	for key, t := range keyTypes {
 		if t != "number" {
@@ -903,6 +1003,11 @@ func GetSettingsYAML(r *gin.RouterGroup, dbProvider types.IDBProvider) gin.IRout
 			}
 		}
 
+		// #60: project the legacy yaml shape (path_spacing, headland_width)
+		// onto the new GUI-facing field (strip_overlap). Done after defaults
+		// merge so tool_width is reliably populated.
+		injectStripOverlap(flat)
+
 		c.JSON(200, flat)
 	})
 }
@@ -963,9 +1068,20 @@ func PostSettingsYAML(r *gin.RouterGroup, dbProvider types.IDBProvider, rosProvi
 			existing[key] = value
 		}
 
+		// #60: convert the GUI-facing strip_overlap into the legacy
+		// path_spacing yaml field that the C++ planner reads. tool_width
+		// is resolved from `existing` (which has schema defaults merged)
+		// because the request payload usually doesn't carry blade-width.
+		// Both `existing` (for yaml write) and `payload` (for live-tune
+		// republish) are converted so downstream code keeps seeing the
+		// pre-#60 field name.
+		toolWidth := readToolWidth(existing)
+		applyMowingPatternConversion(existing, toolWidth)
+		applyMowingPatternConversion(payload, toolWidth)
+
 		// Debug: surface the resolved namespace for the live-tunable keys so
 		// we can confirm x-yaml-node hints are honoured. Logged once per save.
-		debugKeys := []string{"outline_passes", "outline_offset", "path_spacing", "headland_width", "mow_angle_offset_deg"}
+		debugKeys := []string{"outline_passes", "outline_offset", "path_spacing", "mow_angle_offset_deg"}
 		for _, k := range debugKeys {
 			log.Printf("PostSettingsYAML: nodeMappings[%q] = %q (in payload: %v)", k, nodeMappings[k], payload[k])
 		}

@@ -8,7 +8,8 @@ The pull-based, ad-hoc strip planner inside `map_server_node` is being replaced 
 
 ### Phase 1 — Coverage Planner Rewrite
 
-**Status:** spec
+**Status:** planning
+**Plans:** 9 plans
 **Goal:** Replace the existing pull-based strip planner with a new `coverage_planner_node` that emits a complete deterministic sequential `PoseStamped` waypoint plan via `PlanCoverage.action`, with metadata, YAML checkpoints, and pre-flight geometric validation. Plan inkludiert Undock/Approach/Dock-Segmente. BT folgt Plan sequenziell.
 
 **Canonical refs:**
@@ -29,4 +30,14 @@ The pull-based, ad-hoc strip planner inside `map_server_node` is being replaced 
 **Out of scope (this phase):**
 - Boustrophedon Cell Decomposition (BCD) — Iteration 1 uses simple AABB sweep with obstacle clipping
 - Bezier/Spline smoothing — straight segments + in-place yaw rotations only
-- Removal of the legacy strip planner code from `map_server_node` — runs in parallel until the new planner is verified on hardware
+
+Plans:
+- [ ] 01-01-PLAN.md — mowgli_interfaces extensions (4 new msgs + GetAllAreas.srv + WriteCheckpoint.srv + PlanCoverage.action rewrite + MapArea.narrow_area_strategy + firmware/Go/TS regen)
+- [ ] 01-02-PLAN.md — mowgli_geometry header-only library (4 promoted helpers + footprint/PCA/atomic_write + 4 unit tests)
+- [ ] 01-03-PLAN.md — mowgli_robot.yaml robot_geometry: section + CLAUDE.md Architecture Invariant #15 (manual sync rule)
+- [ ] 01-04-PLAN.md — GUI: useCoveragePlan hook + delete plan-preview-* layers + add coverage-plan-* layers + EditAreaModal narrow_area_strategy dropdown + MapToolbar Preview Plan button
+- [ ] 01-05-PLAN.md — mowgli_coverage_planner skeleton: action server + GetAllAreas client + WriteCheckpoint service + Checkpoint .kv I/O + 4 unit tests
+- [ ] 01-06-PLAN.md — map_server_node cleanup: GetAllAreas server + delete 5 pull-path .srv files + delete 8+ strip-planner functions + areas.yaml narrow_area_strategy round-trip
+- [ ] 01-07-PLAN.md — mowgli_coverage_planner core: ValidatorPipeline (10 SPEC points, 8 error codes) + OutlineGenerator + BoustrophedonSweeper + NarrowAreaStrategy + auto-rotate + resume + 7 unit tests
+- [ ] 01-08-PLAN.md — BT integration: delete 5 legacy nodes + add PlanCoverageGoal + FollowCoveragePlan + main_tree.xml subtree + bt_context.hpp + safety unit tests
+- [ ] 01-09-PLAN.md — E2E + Pi5 hardware smoke: launch wiring + e2e_test.py update + VALIDATION.md populate + Pi5 Eichenau garden checkpoint (SPEC AC-13)

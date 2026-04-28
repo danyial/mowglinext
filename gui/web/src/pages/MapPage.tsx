@@ -656,11 +656,18 @@ export const MapPage: React.FC<{compact?: boolean}> = ({compact = false}) => {
                     {planPreview && (
                         <Source type={"geojson"} id={"plan-preview"} data={planPreview}>
                             {/* Blade-coverage swath — translucent orange band whose width
-                                tracks the mower blade. Orange contrasts cleanly against the
-                                green map background. Zoom-interpolated pixels-per-metre
-                                approximates Mapbox Web-Mercator at ~48° latitude:
-                                ~{0.06, 0.25, 1, 4, 16} px/m at zoom {16,18,20,22,24}.
-                                With mower_width ≈ 0.18 m the band scales accordingly. */}
+                                exactly tracks the mower blade footprint on the ground.
+                                Mapbox Web-Mercator metres-per-pixel at latitude φ:
+                                  m/px = 78271.484 / 2^(zoom-1) × cos(φ)
+                                at φ ≈ 48° → cos≈0.669, giving ~{0.6, 2.5, 10, 40, 160}
+                                px/m at zoom {16,18,20,22,24}. Multiplied by
+                                mower_width = 0.18 m gives the values below. CRITICAL:
+                                if this band visually exceeds the area boundary it
+                                MUST mean either (a) outline_offset is mis-configured
+                                or (b) the px/m table here drifted from reality —
+                                NOT that the planner allows the blade outside. The
+                                planner places pass-0 outer edge at outline_offset
+                                inside the polygon (default 0.05 m). */}
                             <Layer type={"line"} id={"plan-preview-coverage"}
                                 filter={['any',
                                     ['==', ['get', 'kind'], 'strip'],
@@ -675,11 +682,11 @@ export const MapPage: React.FC<{compact?: boolean}> = ({compact = false}) => {
                                     "line-opacity": 0.35,
                                     "line-width": [
                                         'interpolate', ['exponential', 2], ['zoom'],
-                                        16, 0.5,
-                                        18, 2,
-                                        20, 8,
-                                        22, 32,
-                                        24, 128,
+                                        16, 0.1,
+                                        18, 0.45,
+                                        20, 1.8,
+                                        22, 7.2,
+                                        24, 28.8,
                                     ],
                                 }}/>
                             {/* Outline pass — drawn first so strips/transits render on top */}
@@ -896,11 +903,18 @@ export const MapPage: React.FC<{compact?: boolean}> = ({compact = false}) => {
                     {planPreview && (
                         <Source type={"geojson"} id={"plan-preview"} data={planPreview}>
                             {/* Blade-coverage swath — translucent orange band whose width
-                                tracks the mower blade. Orange contrasts cleanly against the
-                                green map background. Zoom-interpolated pixels-per-metre
-                                approximates Mapbox Web-Mercator at ~48° latitude:
-                                ~{0.06, 0.25, 1, 4, 16} px/m at zoom {16,18,20,22,24}.
-                                With mower_width ≈ 0.18 m the band scales accordingly. */}
+                                exactly tracks the mower blade footprint on the ground.
+                                Mapbox Web-Mercator metres-per-pixel at latitude φ:
+                                  m/px = 78271.484 / 2^(zoom-1) × cos(φ)
+                                at φ ≈ 48° → cos≈0.669, giving ~{0.6, 2.5, 10, 40, 160}
+                                px/m at zoom {16,18,20,22,24}. Multiplied by
+                                mower_width = 0.18 m gives the values below. CRITICAL:
+                                if this band visually exceeds the area boundary it
+                                MUST mean either (a) outline_offset is mis-configured
+                                or (b) the px/m table here drifted from reality —
+                                NOT that the planner allows the blade outside. The
+                                planner places pass-0 outer edge at outline_offset
+                                inside the polygon (default 0.05 m). */}
                             <Layer type={"line"} id={"plan-preview-coverage"}
                                 filter={['any',
                                     ['==', ['get', 'kind'], 'strip'],
@@ -915,11 +929,11 @@ export const MapPage: React.FC<{compact?: boolean}> = ({compact = false}) => {
                                     "line-opacity": 0.35,
                                     "line-width": [
                                         'interpolate', ['exponential', 2], ['zoom'],
-                                        16, 0.5,
-                                        18, 2,
-                                        20, 8,
-                                        22, 32,
-                                        24, 128,
+                                        16, 0.1,
+                                        18, 0.45,
+                                        20, 1.8,
+                                        22, 7.2,
+                                        24, 28.8,
                                     ],
                                 }}/>
                             {/* Outline pass — drawn first so strips/transits render on top */}

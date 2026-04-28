@@ -2550,6 +2550,29 @@ void MapServerNode::ensure_strip_layout(size_t area_index)
     rotated_pts.emplace_back(rx, ry);
   }
 
+  // Rotate every obstacle polygon into the same scan frame. Strip-segment
+  // generation below intersects each scan line with the outer polygon AND
+  // every obstacle, then relies on even-odd-fill pairing to produce the
+  // correct gaps where the strip would enter an obstacle. Without this
+  // step the boustrophedon strips run straight through obstacle interiors
+  // (issue #56 sub-A).
+  std::vector<std::vector<std::pair<double, double>>> rotated_obstacles;
+  rotated_obstacles.reserve(area.obstacles.size());
+  for (const auto& obs : area.obstacles)
+  {
+    if (obs.points.size() < 3)
+      continue;
+    std::vector<std::pair<double, double>> rot;
+    rot.reserve(obs.points.size());
+    for (const auto& p : obs.points)
+    {
+      double rx = cos_r * static_cast<double>(p.x) - sin_r * static_cast<double>(p.y);
+      double ry = sin_r * static_cast<double>(p.x) + cos_r * static_cast<double>(p.y);
+      rot.emplace_back(rx, ry);
+    }
+    rotated_obstacles.push_back(std::move(rot));
+  }
+
   // Bounding box of rotated polygon (both axes — Y range used for adaptive
   // inset sizing below)
   double min_x = 1e9, max_x = -1e9;
@@ -2592,6 +2615,23 @@ void MapServerNode::ensure_strip_layout(size_t area_index)
   const double diag = std::hypot(max_x - min_x, max_y - min_y);
   const double blade_floor = mower_width_ * 0.5 + 0.05;
   double inset = std::clamp(diag * 0.05, blade_floor, strip_boundary_margin_m_);
+
+  // When outline_passes > 0, the perimeter band of width
+  //   outline_offset_ + outline_passes_ * pass_step
+  // is already covered by the outline loop. Push the strip inset out by at
+  // least that much (plus half a path_spacing so the strip's blade overlaps
+  // the innermost outline pass cleanly) — otherwise the strips and outline
+  // fight for the same cells and waste runtime, and the boundary loop is
+  // re-mowed by the fill pass. Issue #56 sub-B.
+  if (outline_passes_ > 0)
+  {
+    const double effective_strip_step = (path_spacing_ > 0.0) ? path_spacing_ : mower_width_;
+    const double outline_pass_step = std::max(0.02, effective_strip_step - outline_overlap_);
+    const double outline_band =
+        outline_offset_ + outline_passes_ * outline_pass_step + effective_strip_step * 0.5;
+    inset = std::max(inset, outline_band);
+  }
+
   double inner_min_x = min_x + inset;
   double inner_max_x = max_x - inset;
 
@@ -2629,6 +2669,28 @@ void MapServerNode::ensure_strip_layout(size_t area_index)
       {
         double t = (x - x1) / (x2 - x1);
         y_intersections.push_back(y1 + t * (y2 - y1));
+      }
+    }
+
+    // Add obstacle-edge intersections for the same scan line. Each obstacle
+    // contributes pairs of crossings, which the even-odd pairing below uses
+    // to "punch holes" in the strip — the resulting segments stop before
+    // the obstacle and resume on the far side instead of mowing through it.
+    for (const auto& obs : rotated_obstacles)
+    {
+      const int n_obs = static_cast<int>(obs.size());
+      for (int i = 0; i < n_obs; ++i)
+      {
+        int j = (i + 1) % n_obs;
+        double x1 = obs[i].first;
+        double y1 = obs[i].second;
+        double x2 = obs[j].first;
+        double y2 = obs[j].second;
+        if ((x1 < x && x2 >= x) || (x2 < x && x1 >= x))
+        {
+          double t = (x - x1) / (x2 - x1);
+          y_intersections.push_back(y1 + t * (y2 - y1));
+        }
       }
     }
 

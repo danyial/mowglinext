@@ -2627,11 +2627,18 @@ void MapServerNode::ensure_strip_layout(size_t area_index)
   {
     const double effective_strip_step = (path_spacing_ > 0.0) ? path_spacing_ : mower_width_;
     const double outline_pass_step = std::max(0.02, effective_strip_step - outline_overlap_);
-    const double innermost_outline_inset =
-        mower_width_ * 0.5 + outline_offset_ +
+    // The innermost outline pass's blade outer edge sits at
+    //   mower_width + outline_offset + (passes-1) * pass_step
+    // from the polygon edge: blade radius (mower_width/2) for the outline's
+    // outward sweep, plus blade radius again (mower_width/2) for the inset of
+    // the centerline itself, plus the operator-configured outline_offset and
+    // (passes-1) cumulative pass_step. Strip blade outer edge must clear that
+    // edge by half a path_spacing for clean coverage hand-off.
+    const double innermost_outline_outer_inset =
+        mower_width_ + outline_offset_ +
         static_cast<double>(outline_passes_ - 1) * outline_pass_step;
     const double outline_band =
-        innermost_outline_inset + mower_width_ * 0.5 + effective_strip_step * 0.5;
+        innermost_outline_outer_inset + mower_width_ * 0.5 + effective_strip_step * 0.5;
     inset = std::max(inset, outline_band);
   }
 
@@ -3161,8 +3168,22 @@ void MapServerNode::on_preview_plan(
   }
   const double diag = std::hypot(max_x - min_x, max_y - min_y);
   const double blade_floor = mower_width_ * 0.5 + 0.05;
-  const double effective_inset =
+  double effective_inset =
       std::clamp(diag * 0.05, blade_floor, strip_boundary_margin_m_);
+  // Keep the response's effective_inset in sync with the strip-layout's
+  // actual inset (#56 sub-B). Without this the GUI shows the un-boosted
+  // value and developers chase a phantom mismatch between log and visuals.
+  if (outline_passes_ > 0)
+  {
+    const double effective_strip_step = (path_spacing_ > 0.0) ? path_spacing_ : mower_width_;
+    const double outline_pass_step = std::max(0.02, effective_strip_step - outline_overlap_);
+    const double innermost_outline_inset =
+        mower_width_ * 0.5 + outline_offset_ +
+        static_cast<double>(outline_passes_ - 1) * outline_pass_step;
+    const double outline_band =
+        innermost_outline_inset + mower_width_ * 0.5 + effective_strip_step * 0.5;
+    effective_inset = std::max(effective_inset, outline_band);
+  }
 
   // Concatenate every strip's centerline samples into a single Path. Each
   // strip becomes a contiguous run of poses; segment_starts[i] points at

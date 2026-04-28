@@ -3517,20 +3517,24 @@ nav_msgs::msg::Path MapServerNode::compute_outline_path(size_t area_index) const
     }
     append_loop_to_path(offset_pts);
 
-    // For each obstacle polygon (e.g. a flower bed, tree, pond inside
-    // the mowing area) emit an OUTWARD offset loop on this same pass.
-    // The blade-edge then clears the obstacle by `inset` metres on
-    // every pass. Negative inset flips the inward shift to outward —
-    // the bisector points inward by the helper's math, multiplying by
-    // a negative magnitude shifts vertices outward by |inset|.
-    for (const auto& obstacle : area.obstacles)
-    {
-      if (obstacle.points.size() < 3) continue;
-      const auto obs_offset_pts =
-          offset_polygon_inward(obstacle.points, -inset);
-      if (obs_offset_pts.size() < 3) continue;
-      append_loop_to_path(obs_offset_pts);
-    }
+    // SAFETY (#61 rapid mitigation, 2026-04-28):
+    // Obstacle outline loops are intentionally NOT appended here.
+    // Concatenating them into the same nav_msgs/Path produced a
+    // straight-line transit segment between the outer-loop end and
+    // each obstacle-loop start that crossed the obstacle interior.
+    // FollowPath drives that segment directly; collision_monitor only
+    // catches PHYSICAL obstacles via LiDAR, so a virtual obstacle
+    // (flower bed marked in the map but with nothing physically there)
+    // would let the robot drive straight through. Observed live during
+    // a mowing test on 2026-04-28.
+    //
+    // Trade-off until #61 lands a costmap-aware multi-path executor:
+    // each obstacle gets a ~mower_width unmowed ring around it. The
+    // strip layer (ensure_strip_layout) still inflates obstacles by
+    // y_inset and clips strips around them, so blade safety is
+    // preserved everywhere — only the dedicated outline ring around
+    // each obstacle is dropped.
+    (void)area.obstacles;  // explicit acknowledgement of unused field
   }
   return path;
 }

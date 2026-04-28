@@ -42,6 +42,33 @@ export const MapPage: React.FC<{compact?: boolean}> = ({compact = false}) => {
     const mowerAction = useMowerAction()
 
     const {settings} = useSettings()
+
+    // Dynamic line-width for the plan-preview coverage swath. Two layers
+    // share this expression so a single edit keeps them in sync.
+    //
+    // Mapbox-GL natively renders 512-px tiles; the conventional slippy-map
+    // formula 156543.03 / 2^zoom assumes 256-px tiles, so for the same zoom
+    // value Mapbox-GL shows twice the resolution. The empirically-calibrated
+    // px/m table below is for lat 48° (Eichenau): 1.1 px/m at zoom 16 up to
+    // 320 px/m at zoom 24. The * operator scales the table by the actual
+    // tool_width (metres) read from the live settings, so changing the
+    // blade size in the form moves the visualization with it.
+    const coverageLineWidth = useMemo(() => {
+        const toolWidthM = parseFloat(String(settings?.tool_width ?? 0.18)) || 0.18;
+        return [
+            "*",
+            [
+                "interpolate", ["exponential", 2], ["zoom"],
+                16, 1.1,
+                18, 5,
+                20, 20,
+                22, 80,
+                24, 320,
+            ],
+            toolWidthM,
+        ] as any;
+    }, [settings?.tool_width]);
+
     const [labelsCollection, setLabelsCollection] = useState<FeatureCollection>({
         type: "FeatureCollection",
         features: []
@@ -656,18 +683,9 @@ export const MapPage: React.FC<{compact?: boolean}> = ({compact = false}) => {
                     {planPreview && (
                         <Source type={"geojson"} id={"plan-preview"} data={planPreview}>
                             {/* Blade-coverage swath — translucent orange band whose width
-                                exactly tracks the mower blade footprint on the ground.
-                                Mapbox Web-Mercator metres-per-pixel at latitude φ:
-                                  m/px = 78271.484 / 2^(zoom-1) × cos(φ)
-                                at φ ≈ 48° → cos≈0.669, giving ~{0.6, 2.5, 10, 40, 160}
-                                px/m at zoom {16,18,20,22,24}. Multiplied by
-                                mower_width = 0.18 m gives the values below. CRITICAL:
-                                if this band visually exceeds the area boundary it
-                                MUST mean either (a) outline_offset is mis-configured
-                                or (b) the px/m table here drifted from reality —
-                                NOT that the planner allows the blade outside. The
-                                planner places pass-0 outer edge at outline_offset
-                                inside the polygon (default 0.05 m). */}
+                                exactly tracks the live tool_width on the ground. See
+                                coverageLineWidth memo near the top of the component for
+                                the px/m table + tool_width multiplier. */}
                             <Layer type={"line"} id={"plan-preview-coverage"}
                                 filter={['any',
                                     ['==', ['get', 'kind'], 'strip'],
@@ -680,14 +698,7 @@ export const MapPage: React.FC<{compact?: boolean}> = ({compact = false}) => {
                                 paint={{
                                     "line-color": "#f97316",
                                     "line-opacity": 0.35,
-                                    "line-width": [
-                                        'interpolate', ['exponential', 2], ['zoom'],
-                                        16, 0.1,
-                                        18, 0.45,
-                                        20, 1.8,
-                                        22, 7.2,
-                                        24, 28.8,
-                                    ],
+                                    "line-width": coverageLineWidth,
                                 }}/>
                             {/* Outline pass — drawn first so strips/transits render on top */}
                             <Layer type={"line"} id={"plan-preview-outline"}
@@ -903,18 +914,9 @@ export const MapPage: React.FC<{compact?: boolean}> = ({compact = false}) => {
                     {planPreview && (
                         <Source type={"geojson"} id={"plan-preview"} data={planPreview}>
                             {/* Blade-coverage swath — translucent orange band whose width
-                                exactly tracks the mower blade footprint on the ground.
-                                Mapbox Web-Mercator metres-per-pixel at latitude φ:
-                                  m/px = 78271.484 / 2^(zoom-1) × cos(φ)
-                                at φ ≈ 48° → cos≈0.669, giving ~{0.6, 2.5, 10, 40, 160}
-                                px/m at zoom {16,18,20,22,24}. Multiplied by
-                                mower_width = 0.18 m gives the values below. CRITICAL:
-                                if this band visually exceeds the area boundary it
-                                MUST mean either (a) outline_offset is mis-configured
-                                or (b) the px/m table here drifted from reality —
-                                NOT that the planner allows the blade outside. The
-                                planner places pass-0 outer edge at outline_offset
-                                inside the polygon (default 0.05 m). */}
+                                exactly tracks the live tool_width on the ground. See
+                                coverageLineWidth memo near the top of the component for
+                                the px/m table + tool_width multiplier. */}
                             <Layer type={"line"} id={"plan-preview-coverage"}
                                 filter={['any',
                                     ['==', ['get', 'kind'], 'strip'],
@@ -927,14 +929,7 @@ export const MapPage: React.FC<{compact?: boolean}> = ({compact = false}) => {
                                 paint={{
                                     "line-color": "#f97316",
                                     "line-opacity": 0.35,
-                                    "line-width": [
-                                        'interpolate', ['exponential', 2], ['zoom'],
-                                        16, 0.1,
-                                        18, 0.45,
-                                        20, 1.8,
-                                        22, 7.2,
-                                        24, 28.8,
-                                    ],
+                                    "line-width": coverageLineWidth,
                                 }}/>
                             {/* Outline pass — drawn first so strips/transits render on top */}
                             <Layer type={"line"} id={"plan-preview-outline"}

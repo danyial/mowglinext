@@ -2611,18 +2611,15 @@ void MapServerNode::ensure_strip_layout(size_t area_index)
   {
     const double effective_strip_step = (path_spacing_ > 0.0) ? path_spacing_ : mower_width_;
     const double outline_pass_step = std::max(0.02, effective_strip_step - outline_overlap_);
-    // The innermost outline pass's blade outer edge sits at
-    //   mower_width + outline_offset + (passes-1) * pass_step
-    // from the polygon edge: blade radius (mower_width/2) for the outline's
-    // outward sweep, plus blade radius again (mower_width/2) for the inset of
-    // the centerline itself, plus the operator-configured outline_offset and
-    // (passes-1) cumulative pass_step. Strip blade outer edge must clear that
-    // edge by half a path_spacing for clean coverage hand-off.
-    const double innermost_outline_outer_inset =
-        mower_width_ + outline_offset_ +
+    // Treat the first fill strip as if it were the next outline pass: its
+    // centerline lands one pass_step inward from the innermost outline's
+    // centerline. With outline_overlap=0 (default) pass_step == path_spacing
+    // so blade coverage is continuous from outline → fill, no ungrazed band
+    // and no double-mowing.
+    const double innermost_outline_centerline =
+        mower_width_ * 0.5 + outline_offset_ +
         static_cast<double>(outline_passes_ - 1) * outline_pass_step;
-    const double outline_band =
-        innermost_outline_outer_inset + mower_width_ * 0.5 + effective_strip_step * 0.5;
+    const double outline_band = innermost_outline_centerline + outline_pass_step;
     inset = std::max(inset, outline_band);
   }
 

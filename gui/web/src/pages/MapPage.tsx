@@ -655,8 +655,9 @@ export const MapPage: React.FC<{compact?: boolean}> = ({compact = false}) => {
                     )}
                     {planPreview && (
                         <Source type={"geojson"} id={"plan-preview"} data={planPreview}>
-                            {/* Blade-coverage swath — translucent green band whose width
-                                tracks the mower blade. Zoom-interpolated pixels-per-metre
+                            {/* Blade-coverage swath — translucent orange band whose width
+                                tracks the mower blade. Orange contrasts cleanly against the
+                                green map background. Zoom-interpolated pixels-per-metre
                                 approximates Mapbox Web-Mercator at ~48° latitude:
                                 ~{0.06, 0.25, 1, 4, 16} px/m at zoom {16,18,20,22,24}.
                                 With mower_width ≈ 0.18 m the band scales accordingly. */}
@@ -670,8 +671,8 @@ export const MapPage: React.FC<{compact?: boolean}> = ({compact = false}) => {
                                     "line-join": "round",
                                 }}
                                 paint={{
-                                    "line-color": "#22c55e",
-                                    "line-opacity": 0.30,
+                                    "line-color": "#f97316",
+                                    "line-opacity": 0.35,
                                     "line-width": [
                                         'interpolate', ['exponential', 2], ['zoom'],
                                         16, 0.5,
@@ -894,8 +895,9 @@ export const MapPage: React.FC<{compact?: boolean}> = ({compact = false}) => {
                     )}
                     {planPreview && (
                         <Source type={"geojson"} id={"plan-preview"} data={planPreview}>
-                            {/* Blade-coverage swath — translucent green band whose width
-                                tracks the mower blade. Zoom-interpolated pixels-per-metre
+                            {/* Blade-coverage swath — translucent orange band whose width
+                                tracks the mower blade. Orange contrasts cleanly against the
+                                green map background. Zoom-interpolated pixels-per-metre
                                 approximates Mapbox Web-Mercator at ~48° latitude:
                                 ~{0.06, 0.25, 1, 4, 16} px/m at zoom {16,18,20,22,24}.
                                 With mower_width ≈ 0.18 m the band scales accordingly. */}
@@ -909,8 +911,8 @@ export const MapPage: React.FC<{compact?: boolean}> = ({compact = false}) => {
                                     "line-join": "round",
                                 }}
                                 paint={{
-                                    "line-color": "#22c55e",
-                                    "line-opacity": 0.30,
+                                    "line-color": "#f97316",
+                                    "line-opacity": 0.35,
                                     "line-width": [
                                         'interpolate', ['exponential', 2], ['zoom'],
                                         16, 0.5,

@@ -2598,41 +2598,68 @@ void MapServerNode::ensure_strip_layout(size_t area_index)
   // which is purely tool-radius-driven and does not need diag scaling.
   const double diag = std::hypot(max_x - min_x, max_y - min_y);
   const double blade_floor = mower_width_ * 0.5 + 0.05;
-  double inset = std::clamp(diag * 0.05, blade_floor, strip_boundary_margin_m_);
+  const double safety_inset = std::clamp(diag * 0.05, blade_floor, strip_boundary_margin_m_);
 
-  // When outline_passes > 0, the perimeter band that the outline loop
-  // covers reaches `mower_width/2 + outline_offset + (passes-1) * pass_step`
-  // inward from the polygon edge (matches compute_outline_path's per-pass
-  // inset formula). Push the strip inset out by that much PLUS another
-  // mower_width/2 so the fill strips' blade lands cleanly inside the
-  // innermost outline pass instead of overlapping it, then add half a
-  // path_spacing for a clean overlap edge. Issue #56 sub-B.
+  // Two distinct insets in the rotated scan frame so strips can overlap
+  // outlines on EVERY side (#60 strip-outline overlap = absolute metres):
+  //
+  //   x_inset  → inner_min_x / inner_max_x (sets first/last strip's perpendicular
+  //              position so the strip's blade overlaps the parallel outline by
+  //              outline_overlap_).
+  //   y_inset  → scan-line endpoint clipping AND obstacle outward-offset
+  //              (sets the strip's along-axis end so the blade overlaps the
+  //              perpendicular outline / obstacle outline by outline_overlap_).
+  //
+  // With one outline pass, default settings:
+  //   outline_centerline = w/2 + outline_offset
+  //                      = 0.14 m
+  //   y_inset = w + outline_offset + (N-1)*inter_outline_step − outline_overlap
+  //           = 0.18 + 0.05 + 0 − 0.05 = 0.18 m
+  //   first_strip_centerline = outline_centerline + (w − outline_overlap)
+  //                          = 0.14 + 0.13 = 0.27 m
+  //   x_inset = first_strip_centerline − strip_step / 2
+  //           = 0.27 − 0.065 = 0.205 m
+  //
+  // The strip iteration `for (x = inner_min_x + strip_step/2; x ≤ inner_max_x;
+  // x += strip_step)` then places the first strip at the desired centerline.
+  //
+  // outline_overlap_ semantics (#60): metres of strip-blade overlap with the
+  // innermost outline. Inter-outline overlap is now controlled exclusively by
+  // path_spacing (= line_overlap). Setting outline_overlap_ = 0 leaves a
+  // hairline contact between strip and outline; default 0.05 m gives a 5 cm
+  // overlap on every meeting side.
+  double x_inset = safety_inset;
+  double y_inset = safety_inset;
   if (outline_passes_ > 0)
   {
-    const double effective_strip_step = (path_spacing_ > 0.0) ? path_spacing_ : mower_width_;
-    const double outline_pass_step = std::max(0.02, effective_strip_step - outline_overlap_);
-    // Treat the first fill strip as if it were the next outline pass: its
-    // centerline lands one pass_step inward from the innermost outline's
-    // centerline. With outline_overlap=0 (default) pass_step == path_spacing
-    // so blade coverage is continuous from outline → fill, no ungrazed band
-    // and no double-mowing.
-    const double innermost_outline_centerline =
+    const double inter_outline_step =
+        std::max(0.02, (path_spacing_ > 0.0) ? path_spacing_ : mower_width_);
+    const double effective_strip_step =
+        std::max(0.02, (path_spacing_ > 0.0) ? path_spacing_ : mower_width_);
+    const double outline_centerline =
         mower_width_ * 0.5 + outline_offset_ +
-        static_cast<double>(outline_passes_ - 1) * outline_pass_step;
-    const double outline_band = innermost_outline_centerline + outline_pass_step;
-    inset = std::max(inset, outline_band);
+        static_cast<double>(outline_passes_ - 1) * inter_outline_step;
+    const double y_inset_from_outline =
+        std::max(0.02, mower_width_ + outline_offset_ +
+                       static_cast<double>(outline_passes_ - 1) * inter_outline_step -
+                       outline_overlap_);
+    const double first_strip_centerline =
+        outline_centerline + std::max(0.02, mower_width_ - outline_overlap_);
+    const double x_inset_from_outline =
+        std::max(0.02, first_strip_centerline - effective_strip_step * 0.5);
+    y_inset = std::max(safety_inset, y_inset_from_outline);
+    x_inset = std::max(safety_inset, x_inset_from_outline);
   }
 
-  // Now that `inset` is final, expand each obstacle outward by inset and
-  // rotate into the scan frame. Even-odd-fill on the inflated obstacle
-  // gives a uniform `inset` clearance around the whole perimeter (in
-  // particular: tangential strip endpoints stay clear of round obstacles
-  // even though the per-scan-line inset only acts along the y axis).
+  // Expand each obstacle outward by y_inset (the smaller of the two so strips
+  // overlap obstacle-outlines by outline_overlap on every meeting side). Then
+  // rotate into the scan frame; even-odd-fill on the inflated obstacle gives
+  // a uniform y_inset clearance around the whole perimeter.
   for (const auto& obs : area.obstacles)
   {
     if (obs.points.size() < 3)
       continue;
-    auto expanded = offset_polygon_inward(obs.points, -inset);
+    auto expanded = offset_polygon_inward(obs.points, -y_inset);
     if (expanded.size() < 3)
       continue;
     std::vector<std::pair<double, double>> rot;
@@ -2649,13 +2676,13 @@ void MapServerNode::ensure_strip_layout(size_t area_index)
   RCLCPP_INFO(get_logger(),
               "ensure_strip_layout: outline_passes=%d outline_offset=%.3f "
               "outline_overlap=%.3f path_spacing=%.3f mower_width=%.3f "
-              "strip_boundary_margin=%.3f -> inset=%.3f obstacles=%zu",
+              "strip_boundary_margin=%.3f -> x_inset=%.3f y_inset=%.3f obstacles=%zu",
               outline_passes_, outline_offset_, outline_overlap_, path_spacing_,
-              mower_width_, strip_boundary_margin_m_, inset,
+              mower_width_, strip_boundary_margin_m_, x_inset, y_inset,
               rotated_obstacles.size());
 
-  double inner_min_x = min_x + inset;
-  double inner_max_x = max_x - inset;
+  double inner_min_x = min_x + x_inset;
+  double inner_max_x = max_x - x_inset;
 
   if (inner_min_x >= inner_max_x)
   {
@@ -2745,8 +2772,8 @@ void MapServerNode::ensure_strip_layout(size_t area_index)
     // the expansion so adding more would cancel the safety band.
     for (size_t k = 0; k + 1 < y_intersections.size(); k += 2)
     {
-      const double inset_lo = y_intersections[k].from_outer ? inset : 0.0;
-      const double inset_hi = y_intersections[k + 1].from_outer ? inset : 0.0;
+      const double inset_lo = y_intersections[k].from_outer ? y_inset : 0.0;
+      const double inset_hi = y_intersections[k + 1].from_outer ? y_inset : 0.0;
       double y_lo = y_intersections[k].y + inset_lo;
       double y_hi = y_intersections[k + 1].y - inset_hi;
 
@@ -2783,7 +2810,7 @@ void MapServerNode::ensure_strip_layout(size_t area_index)
   RCLCPP_INFO(get_logger(),
               "Strip layout for area '%s': %zu strips, mow_angle=%.1f° (%s), "
               "rotated bbox X=[%.2f, %.2f], inner_x=[%.2f, %.2f], "
-              "diag=%.2fm, inset=%.2fm (param=%.2fm)",
+              "diag=%.2fm, x_inset=%.2fm y_inset=%.2fm (param=%.2fm)",
               area.name.c_str(),
               layout.strips.size(),
               layout.mow_angle * 180.0 / M_PI,
@@ -2793,7 +2820,8 @@ void MapServerNode::ensure_strip_layout(size_t area_index)
               inner_min_x,
               inner_max_x,
               diag,
-              inset,
+              x_inset,
+              y_inset,
               strip_boundary_margin_m_);
   if (!layout.strips.empty())
   {
@@ -3193,18 +3221,22 @@ void MapServerNode::on_preview_plan(
   double effective_inset =
       std::clamp(diag * 0.05, blade_floor, strip_boundary_margin_m_);
   // Keep the response's effective_inset in sync with the strip-layout's
-  // actual inset (#56 sub-B). Without this the GUI shows the un-boosted
-  // value and developers chase a phantom mismatch between log and visuals.
+  // x_inset value (the larger of the two insets that ensure_strip_layout uses
+  // post-#60). The GUI surfaces this so the operator can spot adaptive-sizing
+  // misbehaviour without crawling C++ logs.
   if (outline_passes_ > 0)
   {
-    const double effective_strip_step = (path_spacing_ > 0.0) ? path_spacing_ : mower_width_;
-    const double outline_pass_step = std::max(0.02, effective_strip_step - outline_overlap_);
-    const double innermost_outline_inset =
+    const double inter_outline_step =
+        std::max(0.02, (path_spacing_ > 0.0) ? path_spacing_ : mower_width_);
+    const double effective_strip_step = inter_outline_step;
+    const double outline_centerline =
         mower_width_ * 0.5 + outline_offset_ +
-        static_cast<double>(outline_passes_ - 1) * outline_pass_step;
-    const double outline_band =
-        innermost_outline_inset + mower_width_ * 0.5 + effective_strip_step * 0.5;
-    effective_inset = std::max(effective_inset, outline_band);
+        static_cast<double>(outline_passes_ - 1) * inter_outline_step;
+    const double first_strip_centerline =
+        outline_centerline + std::max(0.02, mower_width_ - outline_overlap_);
+    const double x_inset_from_outline =
+        std::max(0.02, first_strip_centerline - effective_strip_step * 0.5);
+    effective_inset = std::max(effective_inset, x_inset_from_outline);
   }
 
   // Concatenate every strip's centerline samples into a single Path. Each
@@ -3403,16 +3435,15 @@ nav_msgs::msg::Path MapServerNode::compute_outline_path(size_t area_index) const
   }
 
   const double sample_step = std::max(0.05, resolution_);
-  // Step between consecutive outline passes inward. We track the operator's
-  // configured strip spacing (path_spacing) so outline passes and fill strips
-  // produce matching coverage — otherwise the outline loops sit further apart
-  // than the strips they enclose and leave visible gaps at the inside edge.
-  // outline_overlap is interpreted as ADDITIONAL overlap beyond what
-  // path_spacing already provides, so a 0 value still yields strip-matching
-  // coverage. Falls back to mower_width when path_spacing is unset (legacy
-  // behaviour).
+  // Step between consecutive outline passes inward. Tracks path_spacing
+  // exclusively (#60 unified-overlap semantics) so the outline-to-outline
+  // overlap matches the strip-to-strip overlap and the operator only has
+  // one "Line Overlap" knob to think about. outline_overlap is now reserved
+  // for the strip-to-outline transition (see ensure_strip_layout) and does
+  // not subtract from this step. Falls back to mower_width when path_spacing
+  // is unset (legacy behaviour).
   const double effective_strip = (path_spacing_ > 0.0) ? path_spacing_ : mower_width_;
-  const double pass_step = std::max(0.02, effective_strip - outline_overlap_);
+  const double pass_step = std::max(0.02, effective_strip);
 
   // Helper: densify one offset polygon (closed loop) into the path. Splits
   // the per-edge sample emission and the loop-close vertex append so the

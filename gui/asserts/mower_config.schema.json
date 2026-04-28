@@ -357,10 +357,21 @@
           "maximum": 0.15,
           "multipleOf": 0.005,
           "default": 0.05,
-          "description": "Unified overlap for every line transition: strip-to-strip, outline-to-outline, AND first-strip-to-innermost-outline. With an 18 cm blade and 0.05 m overlap (default), centerlines sit 0.13 m apart. Larger overlap = denser coverage = slower mowing. The yaml stores this as path_spacing (= tool_width - strip_overlap) and forces outline_overlap to 0 so a single knob controls every transition consistently.",
+          "description": "Overlap between every line of the SAME kind: strip-to-strip and outline-to-outline. With an 18 cm blade and 0.05 m overlap (default), centerlines sit 0.13 m apart. The yaml stores this as path_spacing (= tool_width - strip_overlap).",
           "x-yaml-node": "map_server_node",
           "x-live-tunable": true,
           "x-derived": true
+        },
+        "outline_overlap": {
+          "type": "number",
+          "title": "Strip-Outline Overlap",
+          "minimum": 0,
+          "maximum": 0.15,
+          "multipleOf": 0.005,
+          "default": 0.05,
+          "description": "Metres of overlap between the fill strips and the innermost outline pass — applies on EVERY side where a strip's blade meets an outline (perpendicular ends and parallel sides). 0 = bands just touch, 0.05 (default) = 5 cm overlap, larger = blade ploughs deeper into the outline ring.",
+          "x-yaml-node": "map_server_node",
+          "x-live-tunable": true
         },
         "min_turning_radius": {
           "type": "number",

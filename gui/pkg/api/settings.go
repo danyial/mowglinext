@@ -11,6 +11,7 @@ import (
 
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -224,6 +225,30 @@ func extractAllKeys(schema map[string]any, keys map[string]bool) {
 			}
 		}
 	}
+}
+
+// forceFloatYAML rewrites whole-number values for every schema "number"-typed
+// key so they render as YAML floats (`0.0` instead of `0`). gopkg.in/yaml.v3
+// drops the trailing zero on float64 round-trip, which ROS2's parameter
+// loader then reads back as integer and InvalidParameterTypeException kills
+// the node on the next startup. The fix is purely syntactic — values are
+// untouched, only the on-disk representation changes.
+func forceFloatYAML(in []byte, schema map[string]any) []byte {
+	if schema == nil {
+		return in
+	}
+	keyTypes := map[string]string{}
+	extractKeyTypes(schema, keyTypes)
+	out := string(in)
+	for key, t := range keyTypes {
+		if t != "number" {
+			continue
+		}
+		// Match `<indent><key>: <whole-int>` (no decimal point) at line end.
+		re := regexp.MustCompile(`(?m)^(\s+)(` + regexp.QuoteMeta(key) + `):\s+(-?\d+)$`)
+		out = re.ReplaceAllString(out, "$1$2: $3.0")
+	}
+	return []byte(out)
 }
 
 func extractKeyTypes(schema map[string]any, types_ map[string]string) {
@@ -945,6 +970,14 @@ func PostSettingsYAML(r *gin.RouterGroup, dbProvider types.IDBProvider, rosProvi
 			c.JSON(500, ErrorResponse{Error: "failed to marshal YAML: " + err.Error()})
 			return
 		}
+
+		// Force every schema-typed "number" key to render as a YAML float
+		// even when the value is whole. gopkg.in/yaml.v3 serializes
+		// float64(0) as "0", which ROS2's parameter loader then reads as
+		// integer and the C++ node throws InvalidParameterTypeException
+		// on startup ("setting it to {integer} is not allowed"). The same
+		// node never starts again until someone manually adds the .0.
+		out = forceFloatYAML(out, schema)
 
 		header := "# Mowgli Robot Configuration — managed by mowglinext-gui\n" +
 			"# This file is the single source of truth for robot parameters.\n" +

@@ -101,18 +101,22 @@ func injectStripOverlap(flat map[string]any) {
 // applyMowingPatternConversion is the inverse of injectStripOverlap.
 // Called on POST handlers before yaml-write and before the live-tune
 // publish, so the on-disk yaml + the wire message keep using the
-// legacy field name (path_spacing) that the C++ planner already
-// reads. headland_width is left untouched — if the existing yaml has
-// a value for it from a pre-#60 install, the planner-side fallback
-// continues to honour it, but new saves never write or rewrite it.
+// legacy field names (path_spacing, outline_overlap) that the C++
+// planner already reads. headland_width is left untouched — if the
+// existing yaml has a value for it from a pre-#60 install, the
+// planner-side fallback continues to honour it, but new saves never
+// write or rewrite it.
 //
-//   path_spacing = toolWidth - strip_overlap
+//   path_spacing    = toolWidth - strip_overlap
+//   outline_overlap = 0  (unified-overlap design — strip_overlap
+//                         alone controls every line transition)
 //
 // toolWidth is passed explicitly because the request payload from
 // the GUI usually only contains the changed fields (so reading
 // tool_width directly from the payload would return 0). Caller
 // resolves it from the merged-with-defaults existing map.
 func applyMowingPatternConversion(flat map[string]any, toolWidth float64) {
+	flat["outline_overlap"] = 0.0
 	so, ok := flat["strip_overlap"]
 	if !ok {
 		return

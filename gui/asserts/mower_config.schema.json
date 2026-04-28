@@ -350,22 +350,14 @@
           "x-yaml-node": "map_server_node",
           "x-live-tunable": true
         },
-        "outline_overlap": {
-          "type": "number",
-          "title": "Outline Overlap",
-          "default": 0.0,
-          "description": "Overlap between consecutive outline passes (metres).",
-          "x-yaml-node": "map_server_node",
-          "x-live-tunable": true
-        },
         "strip_overlap": {
           "type": "number",
-          "title": "Strip Overlap",
+          "title": "Line Overlap",
           "minimum": 0,
           "maximum": 0.15,
           "multipleOf": 0.005,
           "default": 0.05,
-          "description": "How much each fill strip overlaps the next, in metres. With an 18 cm blade and 0.05 m overlap (default), strips are spaced 0.13 m centerline-to-centerline. Larger overlap = denser coverage = slower mowing. Backed by path_spacing in the yaml; the GUI converts on save.",
+          "description": "Unified overlap for every line transition: strip-to-strip, outline-to-outline, AND first-strip-to-innermost-outline. With an 18 cm blade and 0.05 m overlap (default), centerlines sit 0.13 m apart. Larger overlap = denser coverage = slower mowing. The yaml stores this as path_spacing (= tool_width - strip_overlap) and forces outline_overlap to 0 so a single knob controls every transition consistently.",
           "x-yaml-node": "map_server_node",
           "x-live-tunable": true,
           "x-derived": true

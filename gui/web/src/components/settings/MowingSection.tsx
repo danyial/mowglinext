@@ -190,17 +190,7 @@ export const MowingSection: React.FC<Props> = ({ values, onChange }) => {
                                     </Form.Item>
                                 </Col>
                                 <Col xs={12}>
-                                    <Form.Item label="Outline Overlap" tooltip="Overlap between consecutive outline passes">
-                                        <InputNumber
-                                            value={values.outline_overlap}
-                                            onChange={(v) => onChange("outline_overlap", v)}
-                                            min={0} max={0.2} step={0.005} precision={3}
-                                            style={{ width: "100%" }} addonAfter="m"
-                                        />
-                                    </Form.Item>
-                                </Col>
-                                <Col xs={12}>
-                                    <Form.Item label="Strip Overlap" tooltip="How much each fill strip overlaps the next (5 cm default with an 18 cm blade)">
+                                    <Form.Item label="Line Overlap" tooltip="Unified overlap between every line: strip-to-strip, outline-to-outline, and first-strip-to-innermost-outline. 0.05 m = 5 cm overlap with an 18 cm blade.">
                                         <InputNumber
                                             value={values.strip_overlap}
                                             onChange={(v) => onChange("strip_overlap", v)}

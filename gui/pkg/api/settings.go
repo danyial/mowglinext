@@ -32,49 +32,18 @@ func SettingsRoutes(r *gin.RouterGroup, dbProvider types.IDBProvider, rosProvide
 	PostSettingsStatus(r, dbProvider)
 }
 
-// forceFloat is a float64 that always renders with at least one decimal in
-// JSON ("0.0" instead of "0"). foxglove_bridge's JSON→CDR encoder relies on
-// the JSON token type to pick the right CDR slot for each schema field —
-// when it sees an unadorned "0" for a declared float64 field it falls back
-// to integer parsing and the entire request is rejected with "rmw_serialize:
-// invalid data size". Same root cause as the yaml-write bug fixed by
-// forceFloatYAML, just on the wire instead of on disk.
-type forceFloat float64
-
-func (f forceFloat) MarshalJSON() ([]byte, error) {
-	s := strconv.FormatFloat(float64(f), 'f', -1, 64)
-	if !strings.ContainsAny(s, ".eE") {
-		s += ".0"
-	}
-	return []byte(s), nil
-}
-
-// setPlanningParamsLocal mirrors mowgli.SetPlanningParamsReq but uses
-// forceFloat for every double so we don't have to touch the generated types
-// (which would affect every other consumer of the message). All wire fields
-// are float64 even though outline_passes is conceptually integer — the
-// service IDL was switched to all-doubles to dodge a foxglove_bridge bug
-// that rejects mixed int32/float64 service requests at the rmw layer.
-type setPlanningParamsLocal struct {
-	OutlinePasses     forceFloat `json:"outline_passes"`
-	OutlineOffset     forceFloat `json:"outline_offset"`
-	OutlineOverlap    forceFloat `json:"outline_overlap"`
-	PathSpacing       forceFloat `json:"path_spacing"`
-	MowAngleOffsetDeg forceFloat `json:"mow_angle_offset_deg"`
-	HeadlandWidth     forceFloat `json:"headland_width"`
-}
-
 // liveTuneMapServer pushes the live-tunable subset of the settings payload
-// to /map_server_node/set_planning_params. We use a custom mowgli_interfaces
-// service rather than the standard rcl_interfaces/srv/SetParameters because
-// foxglove_bridge cannot serialize the nested ParameterValue type ("rosidl
-// typesupport identifier rosidl_typesupport_cpp not supported by this
-// library, rmw_serialize: invalid data size"). The custom service is flat
-// primitives, which the bridge handles cleanly.
+// to /map_server_node/planning_params_in (topic). We use a topic rather
+// than rcl_interfaces/srv/SetParameters or our own SetPlanningParams
+// service because foxglove_bridge can't relay either through rmw_cyclonedds:
+// service requests round-trip through "rosidl_typesupport_cpp not supported
+// by this library, rmw_serialize: invalid data size" no matter how flat the
+// schema is. Topic publish goes through cleanly because the bridge already
+// has working JSON↔CDR mappings advertised for every other topic.
 //
-// Sentinels (-1 for the int, <0 for the doubles) leave the existing value
-// alone, so we only push fields the operator actually changed and never
-// clobber server-side overrides.
+// Sentinels (<0 for non-negative fields, >180 for the angle since -1 means
+// "auto") leave the existing value alone, so we only push fields the
+// operator actually changed and never clobber server-side overrides.
 func liveTuneMapServer(ctx context.Context, rosProvider types.IRosProvider, payload map[string]any) {
 	if rosProvider == nil {
 		return
@@ -150,33 +119,33 @@ func liveTuneMapServer(ctx context.Context, rosProvider types.IRosProvider, payl
 		return
 	}
 
-	wireReq := setPlanningParamsLocal{
-		OutlinePasses:     forceFloat(req.OutlinePasses),
-		OutlineOffset:     forceFloat(req.OutlineOffset),
-		OutlineOverlap:    forceFloat(req.OutlineOverlap),
-		PathSpacing:       forceFloat(req.PathSpacing),
-		MowAngleOffsetDeg: forceFloat(req.MowAngleOffsetDeg),
-		HeadlandWidth:     forceFloat(req.HeadlandWidth),
+	// Publish to /map_server_node/planning_params_in (topic) instead of
+	// calling the SetPlanningParams service. foxglove_bridge can't relay our
+	// service requests through rmw_cyclonedds (typesupport identifier
+	// mismatch on rosidl_typesupport_cpp), but topic-pub/sub goes through
+	// cleanly because the bridge already advertises a JSON↔CDR mapping for
+	// every other topic in the system.
+	wireMsg := mowgli.PlanningParams{
+		OutlinePasses:     req.OutlinePasses,
+		OutlineOffset:     req.OutlineOffset,
+		OutlineOverlap:    req.OutlineOverlap,
+		PathSpacing:       req.PathSpacing,
+		MowAngleOffsetDeg: req.MowAngleOffsetDeg,
+		HeadlandWidth:     req.HeadlandWidth,
 	}
-	if dbg, err := json.Marshal(wireReq); err == nil {
-		log.Printf("liveTuneMapServer: request JSON = %s", string(dbg))
+	if dbg, err := json.Marshal(wireMsg); err == nil {
+		log.Printf("liveTuneMapServer: publishing planning_params_in = %s", string(dbg))
 	}
-
-	var res mowgli.SetPlanningParamsRes
-	callCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
-	defer cancel()
-	if err := rosProvider.CallService(callCtx,
-		"/map_server_node/set_planning_params",
-		&wireReq, &res,
-		"mowgli_interfaces/srv/SetPlanningParams"); err != nil {
-		log.Printf("liveTuneMapServer: SetPlanningParams call failed (yaml is still persisted): %v", err)
+	if err := rosProvider.Publish(
+		"/map_server_node/planning_params_in",
+		"mowgli_interfaces/msg/PlanningParams",
+		&wireMsg,
+	); err != nil {
+		log.Printf("liveTuneMapServer: planning_params_in publish failed (yaml is still persisted): %v", err)
 		return
 	}
-	if !res.Success {
-		log.Printf("liveTuneMapServer: server rejected update: %s", res.Message)
-		return
-	}
-	log.Printf("liveTuneMapServer: %s", res.Message)
+	log.Printf("liveTuneMapServer: planning_params_in published")
+	_ = ctx // keep signature stable for callers passing request context
 }
 
 // GetSettingsStatus returns whether onboarding has been completed.

@@ -112,6 +112,16 @@ type ObstacleArray struct {
 	Obstacles                 []TrackedObstacle              `json:"obstacles"`
 }
 
+// PlanningParams matches mowgli_interfaces/msg/PlanningParams.
+type PlanningParams struct {
+	OutlinePasses             float64                        `json:"outline_passes"`
+	OutlineOffset             float64                        `json:"outline_offset"`
+	OutlineOverlap            float64                        `json:"outline_overlap"`
+	PathSpacing               float64                        `json:"path_spacing"`
+	MowAngleOffsetDeg         float64                        `json:"mow_angle_offset_deg"`
+	HeadlandWidth             float64                        `json:"headland_width"`
+}
+
 // Power matches mowgli_interfaces/msg/Power.
 type Power struct {
 	Stamp                     geometry.Stamp                 `json:"stamp"`

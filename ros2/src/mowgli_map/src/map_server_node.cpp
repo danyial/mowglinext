@@ -325,6 +325,18 @@ MapServerNode::MapServerNode(const rclcpp::NodeOptions& options)
         on_set_planning_params(req, res);
       });
 
+  // Topic-based companion to the service above. The GUI uses this path
+  // because foxglove_bridge can't relay our service requests through
+  // rmw_cyclonedds (typesupport identifier mismatch on
+  // rosidl_typesupport_cpp). Topics work cleanly.
+  planning_params_sub_ = create_subscription<mowgli_interfaces::msg::PlanningParams>(
+      "~/planning_params_in",
+      rclcpp::QoS(1).reliable(),
+      [this](mowgli_interfaces::msg::PlanningParams::ConstSharedPtr msg)
+      {
+        on_planning_params(msg);
+      });
+
   get_coverage_status_srv_ = create_service<mowgli_interfaces::srv::GetCoverageStatus>(
       "~/get_coverage_status",
       [this](const mowgli_interfaces::srv::GetCoverageStatus::Request::SharedPtr req,
@@ -3496,6 +3508,24 @@ void MapServerNode::on_set_planning_params(
   }
 
   RCLCPP_INFO(get_logger(), "SetPlanningParams: %s", res->message.c_str());
+}
+
+void MapServerNode::on_planning_params(
+    mowgli_interfaces::msg::PlanningParams::ConstSharedPtr msg)
+{
+  // Reuse the service handler by stuffing the topic message into a request
+  // and discarding the response. Same sentinel semantics, same logging.
+  auto req = std::make_shared<mowgli_interfaces::srv::SetPlanningParams::Request>();
+  req->outline_passes = msg->outline_passes;
+  req->outline_offset = msg->outline_offset;
+  req->outline_overlap = msg->outline_overlap;
+  req->path_spacing = msg->path_spacing;
+  req->mow_angle_offset_deg = msg->mow_angle_offset_deg;
+  req->headland_width = msg->headland_width;
+  auto res = std::make_shared<mowgli_interfaces::srv::SetPlanningParams::Response>();
+  on_set_planning_params(req, res);
+  // res->message has already been logged by on_set_planning_params; topic
+  // publishers don't get a reply, so nothing to send back.
 }
 
 void MapServerNode::on_get_coverage_status(

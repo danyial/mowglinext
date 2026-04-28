@@ -43,6 +43,7 @@
 #include <grid_map_msgs/msg/grid_map.hpp>
 #include <grid_map_ros/GridMapRosConverter.hpp>
 #include <mowgli_interfaces/msg/obstacle_array.hpp>
+#include <mowgli_interfaces/msg/planning_params.hpp>
 #include <mowgli_interfaces/msg/status.hpp>
 #include <mowgli_interfaces/srv/add_mowing_area.hpp>
 #include <mowgli_interfaces/srv/get_coverage_status.hpp>
@@ -219,6 +220,13 @@ private:
   void on_set_planning_params(
       const mowgli_interfaces::srv::SetPlanningParams::Request::SharedPtr req,
       mowgli_interfaces::srv::SetPlanningParams::Response::SharedPtr res);
+
+  /// Topic-based companion to on_set_planning_params. The GUI publishes
+  /// to ~/planning_params_in instead of calling the service because
+  /// foxglove_bridge cannot relay the service request through cyclonedds
+  /// (typesupport identifier mismatch — fine for topics). Same sentinel
+  /// semantics apply: <0 leaves the field alone.
+  void on_planning_params(mowgli_interfaces::msg::PlanningParams::ConstSharedPtr msg);
 
   /// Compute a recovery pose inside the nearest mowing area.
   ///
@@ -533,6 +541,7 @@ private:
   rclcpp::Service<mowgli_interfaces::srv::PreviewPlan>::SharedPtr preview_plan_srv_;
   rclcpp::Service<mowgli_interfaces::srv::GetOutlinePath>::SharedPtr get_outline_path_srv_;
   rclcpp::Service<mowgli_interfaces::srv::SetPlanningParams>::SharedPtr set_planning_params_srv_;
+  rclcpp::Subscription<mowgli_interfaces::msg::PlanningParams>::SharedPtr planning_params_sub_;
 
   // ── TF ────────────────────────────────────────────────────────────────────
   std::shared_ptr<tf2_ros::Buffer> tf_buffer_;

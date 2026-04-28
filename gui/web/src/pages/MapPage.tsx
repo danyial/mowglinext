@@ -655,6 +655,30 @@ export const MapPage: React.FC<{compact?: boolean}> = ({compact = false}) => {
                     )}
                     {planPreview && (
                         <Source type={"geojson"} id={"plan-preview"} data={planPreview}>
+                            {/* Blade-coverage swath — translucent green band whose width
+                                tracks the mower blade. Zoom-interpolated pixels-per-metre
+                                approximates Mapbox Web-Mercator at ~48° latitude:
+                                ~{0.06, 0.25, 1, 4, 16} px/m at zoom {16,18,20,22,24}.
+                                With mower_width ≈ 0.18 m the band scales accordingly. */}
+                            <Layer type={"line"} id={"plan-preview-coverage"}
+                                filter={['any',
+                                    ['==', ['get', 'kind'], 'strip'],
+                                    ['==', ['get', 'kind'], 'outline'],
+                                ]}
+                                paint={{
+                                    "line-color": "#22c55e",
+                                    "line-opacity": 0.30,
+                                    "line-cap": "round",
+                                    "line-join": "round",
+                                    "line-width": [
+                                        'interpolate', ['exponential', 2], ['zoom'],
+                                        16, 0.5,
+                                        18, 2,
+                                        20, 8,
+                                        22, 32,
+                                        24, 128,
+                                    ],
+                                }}/>
                             {/* Outline pass — drawn first so strips/transits render on top */}
                             <Layer type={"line"} id={"plan-preview-outline"}
                                 filter={['==', ['get', 'kind'], 'outline']}
@@ -868,6 +892,30 @@ export const MapPage: React.FC<{compact?: boolean}> = ({compact = false}) => {
                     )}
                     {planPreview && (
                         <Source type={"geojson"} id={"plan-preview"} data={planPreview}>
+                            {/* Blade-coverage swath — translucent green band whose width
+                                tracks the mower blade. Zoom-interpolated pixels-per-metre
+                                approximates Mapbox Web-Mercator at ~48° latitude:
+                                ~{0.06, 0.25, 1, 4, 16} px/m at zoom {16,18,20,22,24}.
+                                With mower_width ≈ 0.18 m the band scales accordingly. */}
+                            <Layer type={"line"} id={"plan-preview-coverage"}
+                                filter={['any',
+                                    ['==', ['get', 'kind'], 'strip'],
+                                    ['==', ['get', 'kind'], 'outline'],
+                                ]}
+                                paint={{
+                                    "line-color": "#22c55e",
+                                    "line-opacity": 0.30,
+                                    "line-cap": "round",
+                                    "line-join": "round",
+                                    "line-width": [
+                                        'interpolate', ['exponential', 2], ['zoom'],
+                                        16, 0.5,
+                                        18, 2,
+                                        20, 8,
+                                        22, 32,
+                                        24, 128,
+                                    ],
+                                }}/>
                             {/* Outline pass — drawn first so strips/transits render on top */}
                             <Layer type={"line"} id={"plan-preview-outline"}
                                 filter={['==', ['get', 'kind'], 'outline']}

@@ -665,11 +665,13 @@ export const MapPage: React.FC<{compact?: boolean}> = ({compact = false}) => {
                                     ['==', ['get', 'kind'], 'strip'],
                                     ['==', ['get', 'kind'], 'outline'],
                                 ]}
+                                layout={{
+                                    "line-cap": "round",
+                                    "line-join": "round",
+                                }}
                                 paint={{
                                     "line-color": "#22c55e",
                                     "line-opacity": 0.30,
-                                    "line-cap": "round",
-                                    "line-join": "round",
                                     "line-width": [
                                         'interpolate', ['exponential', 2], ['zoom'],
                                         16, 0.5,
@@ -902,11 +904,13 @@ export const MapPage: React.FC<{compact?: boolean}> = ({compact = false}) => {
                                     ['==', ['get', 'kind'], 'strip'],
                                     ['==', ['get', 'kind'], 'outline'],
                                 ]}
+                                layout={{
+                                    "line-cap": "round",
+                                    "line-join": "round",
+                                }}
                                 paint={{
                                     "line-color": "#22c55e",
                                     "line-opacity": 0.30,
-                                    "line-cap": "round",
-                                    "line-join": "round",
                                     "line-width": [
                                         'interpolate', ['exponential', 2], ['zoom'],
                                         16, 0.5,

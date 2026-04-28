@@ -2550,28 +2550,12 @@ void MapServerNode::ensure_strip_layout(size_t area_index)
     rotated_pts.emplace_back(rx, ry);
   }
 
-  // Rotate every obstacle polygon into the same scan frame. Strip-segment
-  // generation below intersects each scan line with the outer polygon AND
-  // every obstacle, then relies on even-odd-fill pairing to produce the
-  // correct gaps where the strip would enter an obstacle. Without this
-  // step the boustrophedon strips run straight through obstacle interiors
-  // (issue #56 sub-A).
+  // Outward-offset obstacle polygons (so the scan-line crosses an "inflated"
+  // obstacle and the resulting strip-free band is `inset` wide in every
+  // direction, not just along the scan axis), then rotate into the scan
+  // frame. The actual offset distance is computed once `inset` is known
+  // below — this vector is filled then. Issue #56 sub-A.
   std::vector<std::vector<std::pair<double, double>>> rotated_obstacles;
-  rotated_obstacles.reserve(area.obstacles.size());
-  for (const auto& obs : area.obstacles)
-  {
-    if (obs.points.size() < 3)
-      continue;
-    std::vector<std::pair<double, double>> rot;
-    rot.reserve(obs.points.size());
-    for (const auto& p : obs.points)
-    {
-      double rx = cos_r * static_cast<double>(p.x) - sin_r * static_cast<double>(p.y);
-      double ry = sin_r * static_cast<double>(p.x) + cos_r * static_cast<double>(p.y);
-      rot.emplace_back(rx, ry);
-    }
-    rotated_obstacles.push_back(std::move(rot));
-  }
 
   // Bounding box of rotated polygon (both axes — Y range used for adaptive
   // inset sizing below)
@@ -2642,6 +2626,29 @@ void MapServerNode::ensure_strip_layout(size_t area_index)
     inset = std::max(inset, outline_band);
   }
 
+  // Now that `inset` is final, expand each obstacle outward by inset and
+  // rotate into the scan frame. Even-odd-fill on the inflated obstacle
+  // gives a uniform `inset` clearance around the whole perimeter (in
+  // particular: tangential strip endpoints stay clear of round obstacles
+  // even though the per-scan-line inset only acts along the y axis).
+  for (const auto& obs : area.obstacles)
+  {
+    if (obs.points.size() < 3)
+      continue;
+    auto expanded = offset_polygon_inward(obs.points, -inset);
+    if (expanded.size() < 3)
+      continue;
+    std::vector<std::pair<double, double>> rot;
+    rot.reserve(expanded.size());
+    for (const auto& p : expanded)
+    {
+      double rx = cos_r * static_cast<double>(p.x) - sin_r * static_cast<double>(p.y);
+      double ry = sin_r * static_cast<double>(p.x) + cos_r * static_cast<double>(p.y);
+      rot.emplace_back(rx, ry);
+    }
+    rotated_obstacles.push_back(std::move(rot));
+  }
+
   RCLCPP_INFO(get_logger(),
               "ensure_strip_layout: outline_passes=%d outline_offset=%.3f "
               "outline_overlap=%.3f path_spacing=%.3f mower_width=%.3f "
@@ -2673,8 +2680,22 @@ void MapServerNode::ensure_strip_layout(size_t area_index)
   const double strip_step = (path_spacing_ > 0.0) ? path_spacing_ : mower_width_;
   for (double x = inner_min_x + strip_step / 2; x <= inner_max_x; x += strip_step)
   {
-    // Find Y intersections of vertical line x=const with rotated polygon edges
-    std::vector<double> y_intersections;
+    // Tagged y-intersections: we need to distinguish outer-polygon crossings
+    // from obstacle crossings so the even-odd pairing applies a different
+    // inset to each. Outer edges get the full strip inset (already accounts
+    // for the outline band on the outer polygon perimeter). Obstacle edges
+    // are already pre-inflated by `inset` outward so the scan-line crosses
+    // the obstacle at expanded-edge coordinates — applying any further
+    // inset there would cancel out the inflation. Without the tagging the
+    // strip end-points end up radially close to circular obstacles even
+    // though the y-direction inset looks correct.
+    struct YIntersect
+    {
+      double y;
+      bool from_outer;
+    };
+    std::vector<YIntersect> y_intersections;
+
     for (int i = 0; i < n_pts; ++i)
     {
       int j = (i + 1) % n_pts;
@@ -2686,14 +2707,15 @@ void MapServerNode::ensure_strip_layout(size_t area_index)
       if ((x1 < x && x2 >= x) || (x2 < x && x1 >= x))
       {
         double t = (x - x1) / (x2 - x1);
-        y_intersections.push_back(y1 + t * (y2 - y1));
+        y_intersections.push_back({y1 + t * (y2 - y1), true});
       }
     }
 
-    // Add obstacle-edge intersections for the same scan line. Each obstacle
-    // contributes pairs of crossings, which the even-odd pairing below uses
-    // to "punch holes" in the strip — the resulting segments stop before
-    // the obstacle and resume on the far side instead of mowing through it.
+    // Add OUTWARD-EXPANDED obstacle-edge intersections. The expansion is
+    // computed once before this loop (rotated_obstacles_expanded) by
+    // offset_polygon_inward(obstacle, -inset). Even-odd-fill then naturally
+    // creates a strip-free band around each obstacle that's `inset` wide in
+    // every direction, not just along the scan axis.
     for (const auto& obs : rotated_obstacles)
     {
       const int n_obs = static_cast<int>(obs.size());
@@ -2707,7 +2729,7 @@ void MapServerNode::ensure_strip_layout(size_t area_index)
         if ((x1 < x && x2 >= x) || (x2 < x && x1 >= x))
         {
           double t = (x - x1) / (x2 - x1);
-          y_intersections.push_back(y1 + t * (y2 - y1));
+          y_intersections.push_back({y1 + t * (y2 - y1), false});
         }
       }
     }
@@ -2718,15 +2740,18 @@ void MapServerNode::ensure_strip_layout(size_t area_index)
       continue;
     }
 
-    std::sort(y_intersections.begin(), y_intersections.end());
+    std::sort(y_intersections.begin(), y_intersections.end(),
+              [](const YIntersect& a, const YIntersect& b) { return a.y < b.y; });
 
     // Even-odd fill: pair consecutive intersections [0,1], [2,3], ...
-    // This correctly handles concave polygons (L, U shapes) by producing
-    // multiple strip segments per scan line instead of spanning the gap.
+    // Apply inset only to outer-polygon edges; obstacle edges already carry
+    // the expansion so adding more would cancel the safety band.
     for (size_t k = 0; k + 1 < y_intersections.size(); k += 2)
     {
-      double y_lo = y_intersections[k] + inset;
-      double y_hi = y_intersections[k + 1] - inset;
+      const double inset_lo = y_intersections[k].from_outer ? inset : 0.0;
+      const double inset_hi = y_intersections[k + 1].from_outer ? inset : 0.0;
+      double y_lo = y_intersections[k].y + inset_lo;
+      double y_hi = y_intersections[k + 1].y - inset_hi;
 
       if (y_hi - y_lo < mower_width_)
         continue;

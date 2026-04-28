@@ -32,6 +32,35 @@ func SettingsRoutes(r *gin.RouterGroup, dbProvider types.IDBProvider, rosProvide
 	PostSettingsStatus(r, dbProvider)
 }
 
+// forceFloat is a float64 that always renders with at least one decimal in
+// JSON ("0.0" instead of "0"). foxglove_bridge's JSON→CDR encoder relies on
+// the JSON token type to pick the right CDR slot for each schema field —
+// when it sees an unadorned "0" for a declared float64 field it falls back
+// to integer parsing and the entire request is rejected with "rmw_serialize:
+// invalid data size". Same root cause as the yaml-write bug fixed by
+// forceFloatYAML, just on the wire instead of on disk.
+type forceFloat float64
+
+func (f forceFloat) MarshalJSON() ([]byte, error) {
+	s := strconv.FormatFloat(float64(f), 'f', -1, 64)
+	if !strings.ContainsAny(s, ".eE") {
+		s += ".0"
+	}
+	return []byte(s), nil
+}
+
+// setPlanningParamsLocal mirrors mowgli.SetPlanningParamsReq but uses
+// forceFloat for the doubles so we don't have to touch the generated types
+// (which would affect every other consumer of the message).
+type setPlanningParamsLocal struct {
+	OutlinePasses     int32      `json:"outline_passes"`
+	OutlineOffset     forceFloat `json:"outline_offset"`
+	OutlineOverlap    forceFloat `json:"outline_overlap"`
+	PathSpacing       forceFloat `json:"path_spacing"`
+	MowAngleOffsetDeg forceFloat `json:"mow_angle_offset_deg"`
+	HeadlandWidth     forceFloat `json:"headland_width"`
+}
+
 // liveTuneMapServer pushes the live-tunable subset of the settings payload
 // to /map_server_node/set_planning_params. We use a custom mowgli_interfaces
 // service rather than the standard rcl_interfaces/srv/SetParameters because
@@ -118,7 +147,15 @@ func liveTuneMapServer(ctx context.Context, rosProvider types.IRosProvider, payl
 		return
 	}
 
-	if dbg, err := json.Marshal(req); err == nil {
+	wireReq := setPlanningParamsLocal{
+		OutlinePasses:     req.OutlinePasses,
+		OutlineOffset:     forceFloat(req.OutlineOffset),
+		OutlineOverlap:    forceFloat(req.OutlineOverlap),
+		PathSpacing:       forceFloat(req.PathSpacing),
+		MowAngleOffsetDeg: forceFloat(req.MowAngleOffsetDeg),
+		HeadlandWidth:     forceFloat(req.HeadlandWidth),
+	}
+	if dbg, err := json.Marshal(wireReq); err == nil {
 		log.Printf("liveTuneMapServer: request JSON = %s", string(dbg))
 	}
 
@@ -127,7 +164,7 @@ func liveTuneMapServer(ctx context.Context, rosProvider types.IRosProvider, payl
 	defer cancel()
 	if err := rosProvider.CallService(callCtx,
 		"/map_server_node/set_planning_params",
-		&req, &res,
+		&wireReq, &res,
 		"mowgli_interfaces/srv/SetPlanningParams"); err != nil {
 		log.Printf("liveTuneMapServer: SetPlanningParams call failed (yaml is still persisted): %v", err)
 		return

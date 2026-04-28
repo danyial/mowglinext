@@ -50,22 +50,19 @@ export const MapPage: React.FC<{compact?: boolean}> = ({compact = false}) => {
     // formula 156543.03 / 2^zoom assumes 256-px tiles, so for the same zoom
     // value Mapbox-GL shows twice the resolution. The empirically-calibrated
     // px/m table below is for lat 48° (Eichenau): 1.1 px/m at zoom 16 up to
-    // 320 px/m at zoom 24. The * operator scales the table by the actual
-    // tool_width (metres) read from the live settings, so changing the
-    // blade size in the form moves the visualization with it.
+    // 320 px/m at zoom 24. We multiply the table by tool_width in JS rather
+    // than wrapping the interpolate expression in a Mapbox `*` operator —
+    // ["zoom"] / ["interpolate", ["zoom"], …] expressions must sit at the
+    // top level of the property and silently produce zero when nested.
     const coverageLineWidth = useMemo(() => {
         const toolWidthM = parseFloat(String(settings?.tool_width ?? 0.18)) || 0.18;
         return [
-            "*",
-            [
-                "interpolate", ["exponential", 2], ["zoom"],
-                16, 1.1,
-                18, 5,
-                20, 20,
-                22, 80,
-                24, 320,
-            ],
-            toolWidthM,
+            "interpolate", ["exponential", 2], ["zoom"],
+            16, 1.1 * toolWidthM,
+            18, 5 * toolWidthM,
+            20, 20 * toolWidthM,
+            22, 80 * toolWidthM,
+            24, 320 * toolWidthM,
         ] as any;
     }, [settings?.tool_width]);
 

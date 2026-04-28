@@ -2616,19 +2616,22 @@ void MapServerNode::ensure_strip_layout(size_t area_index)
   const double blade_floor = mower_width_ * 0.5 + 0.05;
   double inset = std::clamp(diag * 0.05, blade_floor, strip_boundary_margin_m_);
 
-  // When outline_passes > 0, the perimeter band of width
-  //   outline_offset_ + outline_passes_ * pass_step
-  // is already covered by the outline loop. Push the strip inset out by at
-  // least that much (plus half a path_spacing so the strip's blade overlaps
-  // the innermost outline pass cleanly) — otherwise the strips and outline
-  // fight for the same cells and waste runtime, and the boundary loop is
-  // re-mowed by the fill pass. Issue #56 sub-B.
+  // When outline_passes > 0, the perimeter band that the outline loop
+  // covers reaches `mower_width/2 + outline_offset + (passes-1) * pass_step`
+  // inward from the polygon edge (matches compute_outline_path's per-pass
+  // inset formula). Push the strip inset out by that much PLUS another
+  // mower_width/2 so the fill strips' blade lands cleanly inside the
+  // innermost outline pass instead of overlapping it, then add half a
+  // path_spacing for a clean overlap edge. Issue #56 sub-B.
   if (outline_passes_ > 0)
   {
     const double effective_strip_step = (path_spacing_ > 0.0) ? path_spacing_ : mower_width_;
     const double outline_pass_step = std::max(0.02, effective_strip_step - outline_overlap_);
+    const double innermost_outline_inset =
+        mower_width_ * 0.5 + outline_offset_ +
+        static_cast<double>(outline_passes_ - 1) * outline_pass_step;
     const double outline_band =
-        outline_offset_ + outline_passes_ * outline_pass_step + effective_strip_step * 0.5;
+        innermost_outline_inset + mower_width_ * 0.5 + effective_strip_step * 0.5;
     inset = std::max(inset, outline_band);
   }
 

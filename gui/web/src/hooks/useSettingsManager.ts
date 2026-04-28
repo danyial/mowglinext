@@ -1,6 +1,29 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useApi } from "./useApi.ts";
 import { App } from "antd";
+import type { JSONSchema, JSONSchemaProperty } from "./useSettingsSchema.ts";
+
+// Walk the schema and collect every key tagged with `x-live-tunable: true`.
+// These keys are pushed to /map_server_node/planning_params_in (#54) so
+// changes take effect without a container restart; the GUI suppresses the
+// "Restart required" banner when a save touches only these keys.
+const collectLiveTunableKeys = (schema: JSONSchema | null): Set<string> => {
+    const keys = new Set<string>();
+    if (!schema) return keys;
+    const walk = (node: { properties?: Record<string, JSONSchemaProperty> }) => {
+        if (!node.properties) return;
+        for (const [key, prop] of Object.entries(node.properties)) {
+            if (prop["x-live-tunable"]) {
+                keys.add(key);
+            }
+            if (prop.properties) {
+                walk({ properties: prop.properties });
+            }
+        }
+    };
+    walk(schema);
+    return keys;
+};
 
 export type SettingsSection =
     | "hardware"
@@ -141,18 +164,26 @@ export const useSettingsManager = () => {
     const [saving, setSaving] = useState(false);
     const [restartRequired, setRestartRequired] = useState(false);
     const [searchQuery, setSearchQuery] = useState("");
+    const [liveTunableKeys, setLiveTunableKeys] = useState<Set<string>>(new Set());
     const initialLoadDone = useRef(false);
 
-    // Load values on mount
+    // Load values + schema on mount. The schema is needed to know which keys
+    // are live-tunable (suppress the restart banner when only those change).
     useEffect(() => {
         (async () => {
             try {
                 setLoading(true);
-                const res = await guiApi.settings.yamlList();
-                if (res.error) throw new Error((res.error as any).error);
-                const data = (res.data as Record<string, any>) || {};
+                const [valuesRes, schemaRes] = await Promise.all([
+                    guiApi.settings.yamlList(),
+                    guiApi.settings.schemaList(),
+                ]);
+                if (valuesRes.error) throw new Error((valuesRes.error as any).error);
+                const data = (valuesRes.data as Record<string, any>) || {};
                 setSavedValues(data);
                 setLocalValues(data);
+                if (!schemaRes.error && schemaRes.data) {
+                    setLiveTunableKeys(collectLiveTunableKeys(schemaRes.data as JSONSchema));
+                }
                 initialLoadDone.current = true;
             } catch (e: any) {
                 notification.error({
@@ -213,13 +244,26 @@ export const useSettingsManager = () => {
     const save = useCallback(async () => {
         try {
             setSaving(true);
+            // Snapshot what changed before the save resets dirtyKeys, so we can
+            // suppress the "Restart required" banner when every changed key is
+            // tagged x-live-tunable in the schema (#54 wired the live-push;
+            // #57 is just the UX side).
+            const changedKeys = new Set(dirtyKeys);
+            const allLive =
+                changedKeys.size > 0 &&
+                Array.from(changedKeys).every((k) => liveTunableKeys.has(k));
+
             const res = await guiApi.settings.yamlCreate(localValues);
             if (res.error) throw new Error((res.error as any).error);
             setSavedValues({ ...localValues });
-            setRestartRequired(true);
+            if (!allLive) {
+                setRestartRequired(true);
+            }
             notification.success({
                 message: "Settings saved",
-                description: "Restart ROS2 to apply changes.",
+                description: allLive
+                    ? "Live-tunable parameters applied without restart."
+                    : "Restart ROS2 to apply changes.",
             });
         } catch (e: any) {
             notification.error({
@@ -229,7 +273,7 @@ export const useSettingsManager = () => {
         } finally {
             setSaving(false);
         }
-    }, [localValues, guiApi, notification]);
+    }, [localValues, dirtyKeys, liveTunableKeys, guiApi, notification]);
 
     const revert = useCallback(() => {
         setLocalValues({ ...savedValues });

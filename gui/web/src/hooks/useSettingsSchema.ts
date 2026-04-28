@@ -23,6 +23,7 @@ export type JSONSchemaProperty = {
     "x-yaml-node"?: string;
     "x-remap-values"?: Record<string, any>;
     "x-section"?: string;
+    "x-live-tunable"?: boolean;
     properties?: Record<string, JSONSchemaProperty>;
     allOf?: JSONSchemaCondition[];
     additionalProperties?: JSONSchemaProperty | boolean;

@@ -338,35 +338,40 @@
           "title": "Outline Passes",
           "default": 1,
           "description": "Number of perimeter passes before fill mowing.",
-          "x-yaml-node": "map_server_node"
+          "x-yaml-node": "map_server_node",
+          "x-live-tunable": true
         },
         "outline_offset": {
           "type": "number",
           "title": "Outline Offset",
           "default": 0.05,
           "description": "Inward offset from recorded boundary (metres).",
-          "x-yaml-node": "map_server_node"
+          "x-yaml-node": "map_server_node",
+          "x-live-tunable": true
         },
         "outline_overlap": {
           "type": "number",
           "title": "Outline Overlap",
           "default": 0.0,
           "description": "Overlap between outline and fill passes (metres).",
-          "x-yaml-node": "map_server_node"
+          "x-yaml-node": "map_server_node",
+          "x-live-tunable": true
         },
         "path_spacing": {
           "type": "number",
           "title": "Path Spacing",
           "default": 0.13,
           "description": "Spacing between mowing paths (metres). 0.13 gives overlap with 0.18 blade.",
-          "x-yaml-node": "map_server_node"
+          "x-yaml-node": "map_server_node",
+          "x-live-tunable": true
         },
         "headland_width": {
           "type": "number",
           "title": "Headland Width",
           "default": 0.18,
           "description": "Width of headland (turning area) in metres. Used as upper bound for the strip boundary inset; effective inset is clamped between mower_width/2 + 0.05 m and this value.",
-          "x-yaml-node": "map_server_node"
+          "x-yaml-node": "map_server_node",
+          "x-live-tunable": true
         },
         "min_turning_radius": {
           "type": "number",
@@ -380,7 +385,8 @@
           "title": "Mow Angle Offset",
           "default": -1.0,
           "description": "Mowing angle offset in degrees (-1 = auto-detect via minimum bounding rectangle).",
-          "x-yaml-node": "map_server_node"
+          "x-yaml-node": "map_server_node",
+          "x-live-tunable": true
         },
         "mow_angle_increment_deg": {
           "type": "number",

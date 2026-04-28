@@ -1,7 +1,7 @@
 # Project state
 
 ## Current phase
-1 — Coverage Planner Rewrite (spec)
+1 — Coverage Planner Rewrite (context gathered, ready for planning)
 
 ## Active branch
 `migrate/upstream-localization` (HEAD `c778e40c` at .planning bootstrap time)
@@ -29,3 +29,6 @@ These were locked in chat on 2026-04-28 before `/gsd-spec-phase` started — the
 |---|---|---|
 | 2026-04-28 | Bootstrap `.planning/` directly with this single phase, skip `/gsd-new-project` | Project context is already documented in CLAUDE.md + memory; full discovery would be overhead |
 | 2026-04-28 | Six architectural decisions locked pre-spec (see above) | User explicitly answered all six in chat before invoking `/gsd-spec-phase` |
+| 2026-04-28 | SPEC.md committed — 13 requirements locked, ambiguity 0.17 | `/gsd-spec-phase 1` end-to-end |
+| 2026-04-28 | CONTEXT.md committed — 12 implementation decisions (D-01..D-12) + Claude's discretion items | `/gsd-discuss-phase 1 --chain` end-to-end; `--chain` triggers auto-advance to plan-phase |
+| 2026-04-28 | D-05 supersedes SPEC R-10 wording on file format: key=value text instead of YAML | yaml-cpp deliberately avoided in stack (`hardware_bridge_node.cpp:99`); other R-10 acceptance bits (atomic, sidecar, full field set) preserved |

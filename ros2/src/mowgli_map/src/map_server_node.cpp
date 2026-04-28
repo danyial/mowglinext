@@ -2635,6 +2635,14 @@ void MapServerNode::ensure_strip_layout(size_t area_index)
     inset = std::max(inset, outline_band);
   }
 
+  RCLCPP_INFO(get_logger(),
+              "ensure_strip_layout: outline_passes=%d outline_offset=%.3f "
+              "outline_overlap=%.3f path_spacing=%.3f mower_width=%.3f "
+              "strip_boundary_margin=%.3f -> inset=%.3f obstacles=%zu",
+              outline_passes_, outline_offset_, outline_overlap_, path_spacing_,
+              mower_width_, strip_boundary_margin_m_, inset,
+              rotated_obstacles.size());
+
   double inner_min_x = min_x + inset;
   double inner_max_x = max_x - inset;
 

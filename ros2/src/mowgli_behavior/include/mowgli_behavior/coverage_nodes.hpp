@@ -158,6 +158,18 @@ protected:
   /// rclcpp service round-trips have proven flaky on Cyclone DDS.
   virtual void setBladeEnabled(bool enabled);
 
+  /// Lifted from private to protected for unit-test injection of a synthetic
+  /// coverage_plan_ (test_coverage_nodes.cpp WriteCheckpointAreaIndexTest).
+  /// Production callers are still inside the class.
+  std::vector<CoverageWaypoint> coverage_plan_;
+  size_t current_waypoint_idx_{0};
+  size_t group_end_idx_exclusive_{0};   // exclusive end of the active group
+
+  /// Lifted from private to protected for the same reason. Drives the
+  /// /coverage_planner_node/write_checkpoint RPC; tested via an in-process
+  /// stub server (WriteCheckpointAreaIndexTest in test_coverage_nodes.cpp).
+  void dispatch_checkpoint_write(size_t completed_end_idx_exclusive);
+
 private:
   /// Determine the closing index of a same-segment-type group starting at
   /// `start_idx`. For MOWING_BOUSTROPHEDON, group exactly two waypoints
@@ -169,22 +181,11 @@ private:
   /// in the half-open range [start_idx, end_idx_exclusive).
   nav_msgs::msg::Path build_path_segment(size_t start_idx, size_t end_idx_exclusive) const;
 
-  /// Send a Checkpoint.srv request reflecting the just-completed group at
-  /// `completed_end_idx_exclusive - 1`. Fire-and-forget on the future side
-  /// (we WARN on failure; the next successful checkpoint is the recovery
-  /// point — Q1 lock).
-  void dispatch_checkpoint_write(size_t completed_end_idx_exclusive);
-
   // Sub-action / service clients — created lazily on first use.
   rclcpp_action::Client<Nav2FollowPath>::SharedPtr follow_client_;
   rclcpp_action::Client<Nav2Navigate>::SharedPtr nav_client_;
   rclcpp::Client<mowgli_interfaces::srv::MowerControl>::SharedPtr blade_client_;
   rclcpp::Client<mowgli_interfaces::srv::WriteCheckpoint>::SharedPtr checkpoint_client_;
-
-  // Plan state — copied from blackboard in onStart() (snapshot semantics).
-  std::vector<CoverageWaypoint> coverage_plan_;
-  size_t current_waypoint_idx_{0};
-  size_t group_end_idx_exclusive_{0};   // exclusive end of the active group
 
   // Active goal tracking.
   std::shared_future<FollowGoalHandle::SharedPtr> follow_future_;

@@ -11,6 +11,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <string>
@@ -36,6 +37,11 @@ namespace
 using CoverageWaypoint = mowgli_interfaces::msg::CoverageWaypoint;
 using PlanError = mowgli_interfaces::msg::PlanError;
 
+/// Sentinel: waypoint does not belong to any working/navigation area.
+/// Used for UNDOCK, RETURN_TO_DOCK, DOCK_APPROACH, DOCKING, and the
+/// start-pose TRANSIT bridge (R-9/R-11 fix, Plan 01-10).
+constexpr std::uint32_t kNoArea = std::numeric_limits<std::uint32_t>::max();
+
 constexpr double kMowingSpeed = 0.5;
 constexpr double kTransitSpeed = 0.5;
 constexpr double kUndockDistance = 1.5;
@@ -57,7 +63,7 @@ double yaw_from_quaternion(const geometry_msgs::msg::Quaternion& q)
 
 CoverageWaypoint mk_waypoint(double x, double y, double yaw,
                              std::uint8_t seg_type, bool blade, double speed,
-                             std::uint32_t seq)
+                             std::uint32_t seq, std::uint32_t area_idx)
 {
   CoverageWaypoint wp;
   wp.pose.header.frame_id = "map";
@@ -73,6 +79,7 @@ CoverageWaypoint mk_waypoint(double x, double y, double yaw,
   wp.pose.pose.orientation.w = q.w();
 
   wp.sequence_id = seq;
+  wp.area_index = area_idx;
   wp.speed = static_cast<float>(speed);
   wp.blade_enabled = blade;
   wp.segment_type = seg_type;
@@ -143,26 +150,26 @@ bool PlanBuilder::build(PlanContext& ctx)
     ctx.plan.push_back(
         mk_waypoint(dock_x, dock_y, dock_yaw,
                     CoverageWaypoint::SEGMENT_UNDOCK,
-                    /*blade=*/false, kUndockSpeed, seq++));
+                    /*blade=*/false, kUndockSpeed, seq++, kNoArea));
     // Forward in the dock's body frame is +X, so subtract for "back away".
     const double back_x = dock_x - kUndockDistance * std::cos(dock_yaw);
     const double back_y = dock_y - kUndockDistance * std::sin(dock_yaw);
     ctx.plan.push_back(
         mk_waypoint(back_x, back_y, dock_yaw,
                     CoverageWaypoint::SEGMENT_UNDOCK,
-                    /*blade=*/false, kUndockSpeed, seq++));
+                    /*blade=*/false, kUndockSpeed, seq++, kNoArea));
   }
   else
   {
     // Start at the supplied pose. Emit a TRANSIT placeholder so the BT has a
-    // start anchor.
+    // start anchor. Non-area segment: carries kNoArea sentinel.
     const double sx = ctx.goal.start_pose.pose.position.x;
     const double sy = ctx.goal.start_pose.pose.position.y;
     const double syaw =
         yaw_from_quaternion(ctx.goal.start_pose.pose.orientation);
     ctx.plan.push_back(
         mk_waypoint(sx, sy, syaw, CoverageWaypoint::SEGMENT_TRANSIT,
-                    /*blade=*/false, kTransitSpeed, seq++));
+                    /*blade=*/false, kTransitSpeed, seq++, kNoArea));
   }
 
   // 2. Iterate areas. Single-angle-per-plan policy: the first working area
@@ -195,7 +202,7 @@ bool PlanBuilder::build(PlanContext& ctx)
                                  ctx.plan.back().pose.pose.orientation);
       ctx.plan.push_back(
           mk_waypoint(cx, cy, yaw, CoverageWaypoint::SEGMENT_TRANSIT,
-                      /*blade=*/false, kTransitSpeed, seq++));
+                      /*blade=*/false, kTransitSpeed, seq++, idx));
       ctx.processed_area_indices.push_back(idx);
       continue;
     }
@@ -221,6 +228,15 @@ bool PlanBuilder::build(PlanContext& ctx)
       resume_ck = read_checkpoint_file(areas_dir_, idx);
     }
 
+    // Single push path for all per-area waypoints: stamps both sequence_id
+    // and area_index (the loop variable `idx`) so no emit path can forget
+    // either field. Mitigates T-10-04.
+    auto stamp_and_push = [&](CoverageWaypoint wp) {
+      wp.sequence_id = seq++;
+      wp.area_index = idx;
+      ctx.plan.push_back(std::move(wp));
+    };
+
     // 3. Outlines (working area outside-in).
     if (!resume_ck.has_value() ||
         resume_ck->current_outline_index < ctx.robot.outline_passes)
@@ -243,8 +259,7 @@ bool PlanBuilder::build(PlanContext& ctx)
       }
       for (std::size_t k = skip_n; k < outlines.waypoints.size(); ++k)
       {
-        outlines.waypoints[k].sequence_id = seq++;
-        ctx.plan.push_back(std::move(outlines.waypoints[k]));
+        stamp_and_push(std::move(outlines.waypoints[k]));
       }
     }
 
@@ -268,8 +283,7 @@ bool PlanBuilder::build(PlanContext& ctx)
         ctx.warnings.push_back(obs_outlines.warning);
       for (auto& wp : obs_outlines.waypoints)
       {
-        wp.sequence_id = seq++;
-        ctx.plan.push_back(std::move(wp));
+        stamp_and_push(std::move(wp));
       }
     }
 
@@ -319,7 +333,7 @@ bool PlanBuilder::build(PlanContext& ctx)
       // Resume snap: rewrite the first emitted MOWING_BOUSTROPHEDON pose to
       // the persisted last_swath_endpoint so SPEC R-11's 5cm/5° tolerance
       // is satisfied by construction. This is the "continue at the open
-      // swath endpoint" guarantee.
+      // swath endpoint" guarantee. Must happen before stamp_and_push consumes wp.
       if (is_mow && resume_ck.has_value() && !first_mow_emitted)
       {
         wp.pose.pose.position.x = resume_ck->last_swath_endpoint.position.x;
@@ -329,8 +343,7 @@ bool PlanBuilder::build(PlanContext& ctx)
         first_mow_emitted = true;
       }
 
-      wp.sequence_id = seq++;
-      ctx.plan.push_back(std::move(wp));
+      stamp_and_push(std::move(wp));
     }
 
     ctx.processed_area_indices.push_back(idx);
@@ -342,19 +355,19 @@ bool PlanBuilder::build(PlanContext& ctx)
   ctx.plan.push_back(
       mk_waypoint(approach_x, approach_y, dock_yaw,
                   CoverageWaypoint::SEGMENT_RETURN_TO_DOCK,
-                  /*blade=*/false, kTransitSpeed, seq++));
+                  /*blade=*/false, kTransitSpeed, seq++, kNoArea));
 
   // 7. DOCK_APPROACH (slow approach to the dock).
   ctx.plan.push_back(
       mk_waypoint(approach_x, approach_y, dock_yaw,
                   CoverageWaypoint::SEGMENT_DOCK_APPROACH,
-                  /*blade=*/false, kUndockSpeed, seq++));
+                  /*blade=*/false, kUndockSpeed, seq++, kNoArea));
 
   // 8. DOCKING (final pose at the dock).
   ctx.plan.push_back(
       mk_waypoint(dock_x, dock_y, dock_yaw,
                   CoverageWaypoint::SEGMENT_DOCKING,
-                  /*blade=*/false, /*speed=*/0.0, seq++));
+                  /*blade=*/false, /*speed=*/0.0, seq++, kNoArea));
 
   return true;
 }

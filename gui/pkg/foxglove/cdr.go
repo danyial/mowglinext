@@ -130,6 +130,15 @@ func parseMsgBlock(body string, subTypes map[string][]schemaField) (string, []sc
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
+		// Strip inline comment before the constant-definition check so a `=`
+		// in a comment (e.g. `uint8 mode  # 0=A, 1=B`) doesn't cause the
+		// whole field to be silently skipped.
+		if idx := strings.Index(line, "#"); idx >= 0 {
+			line = strings.TrimSpace(line[:idx])
+			if line == "" {
+				continue
+			}
+		}
 		// Skip constant definitions (e.g. "uint8 FOO=1")
 		if strings.Contains(line, "=") {
 			continue

@@ -235,3 +235,68 @@ func TestDeserializeCDR_CalibrateImuYawStatusGoldenWire(t *testing.T) {
 	assert.Equal(t, int32(378), decoded["stationary_samples_used"])
 	assert.InDelta(t, 11.305172532189346, decoded["gravity_mag_mps2"], 1e-12)
 }
+
+// TestParseSchema_FieldWithEqualsInComment is the regression test for the
+// MapArea-disappears-from-GUI bug. The original parseMsgBlock skipped any
+// line containing `=` to ignore constant defs (e.g. `uint8 FOO=1`). But
+// `narrow_area_strategy` was introduced (Plan 01-04) with an inline comment
+// listing enum-style values:
+//
+//	uint8 narrow_area_strategy           # 0=SKIP, 1=OUTLINE_ONLY, 2=SPECIAL_PATTERN
+//
+// The `=` characters inside the comment matched the constant-detection
+// heuristic, so the parser silently dropped the whole field. The wire
+// payload was still 5 fields, but the schema saw only 4 — which shifted
+// every following byte by one position. In the GetMowingArea response wrapper
+// (`MapArea area, bool success`), the `success` byte was then read out of
+// the `narrow_area_strategy` wire position (= 0), making `success` always
+// `false`. pollMap's `if !res.Success { break }` then dropped every area on
+// the floor and the GUI showed an empty map.
+//
+// Fix: strip inline comments from each line before checking for `=`.
+func TestParseSchema_FieldWithEqualsInComment(t *testing.T) {
+	// Schema as foxglove_bridge advertises it for mowgli_interfaces/msg/MapArea.
+	const mapAreaSchema = `string name
+geometry_msgs/Polygon area
+geometry_msgs/Polygon[] obstacles
+bool is_navigation_area
+uint8 narrow_area_strategy           # 0=SKIP, 1=OUTLINE_ONLY, 2=SPECIAL_PATTERN per SPEC R-13
+================================================================================
+MSG: geometry_msgs/Polygon
+Point32[] points
+================================================================================
+MSG: geometry_msgs/Point32
+float32 x
+float32 y
+float32 z
+`
+
+	schema, err := ParseSchema(mapAreaSchema)
+	require.NoError(t, err)
+
+	// Before the fix this returned 4 fields (narrow_area_strategy missing).
+	require.Len(t, schema.Fields, 5,
+		"narrow_area_strategy must be present even though its inline comment contains '='")
+
+	assert.Equal(t, "name", schema.Fields[0].Name)
+	assert.Equal(t, "area", schema.Fields[1].Name)
+	assert.Equal(t, "obstacles", schema.Fields[2].Name)
+	assert.Equal(t, "is_navigation_area", schema.Fields[3].Name)
+	assert.Equal(t, "narrow_area_strategy", schema.Fields[4].Name)
+	assert.Equal(t, "uint8", schema.Fields[4].Primitive)
+}
+
+// TestParseSchema_RealConstantDefStillSkipped guards the original behavior:
+// real constant definitions (no `#` comment, just a `=` literal) must still
+// be filtered out so they don't contribute a phantom field to the wire layout.
+func TestParseSchema_RealConstantDefStillSkipped(t *testing.T) {
+	const schemaWithConstant = `uint8 STATUS_OK=0
+uint8 STATUS_FAIL=1
+uint8 status
+`
+	schema, err := ParseSchema(schemaWithConstant)
+	require.NoError(t, err)
+
+	require.Len(t, schema.Fields, 1, "constant defs must be skipped, only `status` is a real field")
+	assert.Equal(t, "status", schema.Fields[0].Name)
+}

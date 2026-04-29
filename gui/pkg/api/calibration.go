@@ -30,6 +30,51 @@ const statusTopic = "calibrateStatus"
 // POST /calibration/imu-yaw endpoint and the new POST /calibration/imu-yaw/start.
 type CalibrateImuYawRequest struct {
 	DurationSec float64 `json:"duration_sec"`
+	// DoMagCalibration extends the standard accel-yaw calibration drive
+	// with the magnetometer rotation phase (calibrate_imu_yaw_node lines
+	// 184-590). The node reads `do_mag_calibration` as a ROS parameter
+	// at calibration time, so the GUI flips it via
+	// /calibrate_imu_yaw_node/set_parameters before triggering the
+	// service, then resets it afterwards. Default false — enabling on
+	// every calibration would add ~30 s of in-place rotation.
+	DoMagCalibration bool `json:"do_mag_calibration,omitempty"`
+}
+
+// rcl_interfaces/srv/SetParameters JSON shapes — minimal Go-side hand-written
+// mirror so we don't have to pull in a full rcl_interfaces code-gen for one
+// service. The ParameterValue type tag follows ROS2's wire enum:
+// 1=BOOL, 2=INTEGER, 3=DOUBLE, 4=STRING. Only the fields populated for the
+// chosen type need to be set; foxglove_bridge serializes the zero defaults
+// for the rest.
+type rclParameterValue struct {
+	Type             uint8     `json:"type"`
+	BoolValue        bool      `json:"bool_value"`
+	IntegerValue     int64     `json:"integer_value"`
+	DoubleValue      float64   `json:"double_value"`
+	StringValue      string    `json:"string_value"`
+	ByteArrayValue   []byte    `json:"byte_array_value"`
+	BoolArrayValue   []bool    `json:"bool_array_value"`
+	IntegerArrayValue []int64  `json:"integer_array_value"`
+	DoubleArrayValue []float64 `json:"double_array_value"`
+	StringArrayValue []string  `json:"string_array_value"`
+}
+
+type rclParameter struct {
+	Name  string            `json:"name"`
+	Value rclParameterValue `json:"value"`
+}
+
+type rclSetParametersReq struct {
+	Parameters []rclParameter `json:"parameters"`
+}
+
+type rclSetParametersResult struct {
+	Successful bool   `json:"successful"`
+	Reason     string `json:"reason"`
+}
+
+type rclSetParametersRes struct {
+	Results []rclSetParametersResult `json:"results"`
 }
 
 // CalibrateImuYawResponse mirrors the ROS service response 1:1.
@@ -209,7 +254,7 @@ func postStartCalibrateImuYaw(rosProvider types.IRosProvider, store *calibration
 		}
 
 		job := store.create()
-		go runImuYawCalibration(rosProvider, store, job.ID, body.DurationSec)
+		go runImuYawCalibration(rosProvider, store, job.ID, body.DurationSec, body.DoMagCalibration)
 
 		c.JSON(http.StatusAccepted, StartCalibrationResponse{
 			JobID:     job.ID,
@@ -249,7 +294,7 @@ func postCalibrateImuYaw(rosProvider types.IRosProvider, store *calibrationJobSt
 		}
 
 		job := store.create()
-		go runImuYawCalibration(rosProvider, store, job.ID, body.DurationSec)
+		go runImuYawCalibration(rosProvider, store, job.ID, body.DurationSec, body.DoMagCalibration)
 
 		// Poll the local store rather than blocking on the ROS service
 		// directly. This keeps the HTTP path off the foxglove_bridge
@@ -310,12 +355,44 @@ func postCalibrateImuYaw(rosProvider types.IRosProvider, store *calibrationJobSt
 // result onto a topic — which doesn't go through the same dispatch path —
 // is the workaround. job_id matching prevents a stale `transient_local`
 // status from a previous run from being mistaken for ours.
-func runImuYawCalibration(rosProvider types.IRosProvider, store *calibrationJobStore, jobID string, durationSec float64) {
-	// Generous timeout: the calibration drive itself runs ~30 s and we add a
-	// margin for foxglove_bridge round-trip + RECORDING/IDLE BT transitions.
-	timeout := time.Duration(clampDuration(durationSec)+60.0) * time.Second
+//
+// doMagCalibration extends the drive with the magnetometer rotation phase.
+// The node reads `do_mag_calibration` as a runtime ROS param at calibration
+// time, so we set the param via /calibrate_imu_yaw_node/set_parameters
+// before triggering the service. The param is reset to false on the way
+// out so subsequent calibrations don't accidentally include the rotation
+// phase.
+func runImuYawCalibration(rosProvider types.IRosProvider, store *calibrationJobStore, jobID string, durationSec float64, doMagCalibration bool) {
+	// Generous timeout: the calibration drive itself runs ~30 s, the optional
+	// magnetometer rotation adds another ~30 s on top, and we add a margin
+	// for foxglove_bridge round-trip + RECORDING/IDLE BT transitions.
+	margin := 60.0
+	if doMagCalibration {
+		margin += 30.0
+	}
+	timeout := time.Duration(clampDuration(durationSec)+margin) * time.Second
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
+
+	if doMagCalibration {
+		if err := setBoolParam(ctx, rosProvider, "/calibrate_imu_yaw_node/set_parameters", "do_mag_calibration", true); err != nil {
+			store.markFailed(jobID, "Failed to enable do_mag_calibration parameter: "+err.Error())
+			return
+		}
+		// Always try to reset the parameter so the next calibration drive
+		// doesn't unintentionally include the rotation phase. Use a fresh
+		// short-lived context so the reset happens even after the main
+		// calibration timeout fires.
+		defer func() {
+			resetCtx, resetCancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer resetCancel()
+			if err := setBoolParam(resetCtx, rosProvider, "/calibrate_imu_yaw_node/set_parameters", "do_mag_calibration", false); err != nil {
+				// Reset failures are non-fatal — log via the job error
+				// only if we'd otherwise mark the job successful.
+				_ = err
+			}
+		}()
+	}
 
 	// Subscribe BEFORE invoking the service — we don't want to race the
 	// node's terminal publish.
@@ -419,4 +496,45 @@ func clampDuration(durationSec float64) float64 {
 		return 120.0
 	}
 	return durationSec
+}
+
+// setBoolParam flips a single bool ROS parameter on a remote node via the
+// node's auto-advertised /<node>/set_parameters service. Returns an error
+// if the foxglove_bridge call fails or the node rejects the change.
+func setBoolParam(ctx context.Context, rosProvider types.IRosProvider, service, name string, value bool) error {
+	const paramTypeBool uint8 = 1
+	req := rclSetParametersReq{
+		Parameters: []rclParameter{{
+			Name: name,
+			Value: rclParameterValue{
+				Type:      paramTypeBool,
+				BoolValue: value,
+			},
+		}},
+	}
+	var res rclSetParametersRes
+	if err := rosProvider.CallService(ctx, service, &req, &res, "rcl_interfaces/srv/SetParameters"); err != nil {
+		return err
+	}
+	if len(res.Results) == 0 {
+		return errParamSetEmpty
+	}
+	if !res.Results[0].Successful {
+		return &paramSetError{Name: name, Reason: res.Results[0].Reason}
+	}
+	return nil
+}
+
+var errParamSetEmpty = &paramSetError{Reason: "node returned empty results array"}
+
+type paramSetError struct {
+	Name   string
+	Reason string
+}
+
+func (e *paramSetError) Error() string {
+	if e.Name == "" {
+		return e.Reason
+	}
+	return "set_parameters " + e.Name + " rejected: " + e.Reason
 }

@@ -50,3 +50,13 @@ target_include_directories(test_auto_rotate PRIVATE ${_test_include_dirs})
 ament_add_gtest(test_resume test_resume.cpp)
 target_link_libraries(test_resume mowgli_coverage_planner_lib)
 target_include_directories(test_resume PRIVATE ${_test_include_dirs})
+
+# ---------------------------------------------------------------------------
+# Plan 01-10 Task 2: area_index stamping contract (R-9/R-11 gap closure).
+# Three cases: area waypoints carry loop index, dock/undock carry UINT32_MAX,
+# navigation-area centroid TRANSIT carries navigation area's index.
+# ---------------------------------------------------------------------------
+
+ament_add_gtest(test_plan_builder_area_index test_plan_builder_area_index.cpp)
+target_link_libraries(test_plan_builder_area_index mowgli_coverage_planner_lib)
+target_include_directories(test_plan_builder_area_index PRIVATE ${_test_include_dirs})

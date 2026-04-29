@@ -366,37 +366,24 @@ func (r *RosProvider) pollMap() {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	var workingAreas []mowgli.MapArea
-	var navAreas []mowgli.MapArea
+	// Fetch every area in one call. GetAllAreas (introduced in Plan 01-06)
+	// replaces the previous index-iterated GetMowingArea loop, which depended
+	// on the brittle "iterate until success=false" contract.
+	req := mowgli.GetAllAreasReq{}
+	var res mowgli.GetAllAreasRes
+	if err := r.CallService(ctx, "/map_server_node/get_all_areas", &req, &res, "mowgli_interfaces/srv/GetAllAreas"); err != nil {
+		logrus.WithError(err).Warn("pollMap: get_all_areas failed — map_server_node may not be ready")
+		return
+	}
 
-	// Fetch all areas (index 0..N until success=false)
-	for i := uint32(0); i < 100; i++ {
-		req := mowgli.GetMowingAreaReq{Index: i}
-		var res mowgli.GetMowingAreaRes
-		err := r.CallService(ctx, "/map_server_node/get_mowing_area", &req, &res, "mowgli_interfaces/srv/GetMowingArea")
-		if err != nil {
-			if i == 0 {
-				logrus.WithError(err).WithField("index", i).Warn("pollMap: get_mowing_area failed — map_server_node may not be ready")
-			} else {
-				logrus.WithError(err).WithField("index", i).Warn("pollMap: get_mowing_area failed mid-iteration")
-			}
-			break
-		}
-		if !res.Success {
-			break
-		}
-		if res.Area.IsNavigationArea {
-			navAreas = append(navAreas, res.Area)
+	workingAreas := make([]mowgli.MapArea, 0, len(res.Areas))
+	navAreas := make([]mowgli.MapArea, 0, len(res.Areas))
+	for _, area := range res.Areas {
+		if area.IsNavigationArea {
+			navAreas = append(navAreas, area)
 		} else {
-			workingAreas = append(workingAreas, res.Area)
+			workingAreas = append(workingAreas, area)
 		}
-	}
-
-	if workingAreas == nil {
-		workingAreas = []mowgli.MapArea{}
-	}
-	if navAreas == nil {
-		navAreas = []mowgli.MapArea{}
 	}
 
 	// Read cached docking pose (written by initDockPoseSubscription)

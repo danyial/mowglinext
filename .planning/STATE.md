@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: unknown
-stopped_at: Completed 02-02-PLAN.md
-last_updated: "2026-04-29T21:23:26.779Z"
+stopped_at: Completed 02-03-PLAN.md
+last_updated: "2026-04-29T22:55:00.000Z"
 progress:
   total_phases: 2
   completed_phases: 1
   total_plans: 19
-  completed_plans: 13
-  percent: 68
+  completed_plans: 14
+  percent: 74
 ---
 
 # Project state
@@ -41,10 +41,10 @@ progress:
 
 ## Last session
 
-- **Last session:** 2026-04-29T21:22:46.393Z
-- **Stopped at:** Completed 02-02-PLAN.md
+- **Last session:** 2026-04-29T22:55:00.000Z
+- **Stopped at:** Completed 02-03-PLAN.md (sequential executor on `feat/mag-pipeline-resurrect`)
 - **Resume file:** None
-- **Blockers:** SPEC AC-13 — operator must execute the Pi5 Eichenau garden smoke (procedure documented in 01-09-SUMMARY.md). Until then, Phase 1 remains in "automatable complete, hardware-verified pending" state.
+- **Blockers:** SPEC AC-13 — operator must execute the Pi5 Eichenau garden smoke (procedure documented in 01-09-SUMMARY.md). Until then, Phase 1 remains in "automatable complete, hardware-verified pending" state. Phase 2 builds + colcon tests are deferred to phase-end podman build (host = macOS, no colcon).
 
 ## Performance Metrics
 
@@ -63,6 +63,7 @@ progress:
 | 01    | 11   | 4min     | 4     | 4     |
 | Phase 02 P01 | 31min | 4 tasks | 14 files |
 | Phase 02 P02 | 32 | 2 tasks | 17 files |
+| Phase 02 P03 | 38 | 2 tasks | 7 files |
 
 ## Active branch
 
@@ -134,3 +135,9 @@ These were locked in chat on 2026-04-28 before `/gsd-spec-phase` started — the
 | 2026-04-29 | Plan 02-02: mowgli_lidar_docking CMakeLists uses ament_target_dependencies(... mowgli_geometry kinematic_icp ...) instead of explicit namespaced IMPORTED targets | Mirrors mowgli_coverage_planner Plan 01-05 pattern (lines 65-74); safe across kinematic_icp upstream releases that may rename per-component CMake targets |
 | 2026-04-29 | Plan 02-02: PCD atomic write renders canonical PCD v0.7 ASCII to a std::string and routes through mowgli_geometry::atomic_write | PCL savePCDFile owns its own fd with no public hook to redirect to a writable string buffer in the Kilted apt build of PCL — hand-rolled ASCII renderer is the simpler path |
 | 2026-04-29 | Plan 02-02: dock_scan_meta_age_exceeds uses timegm-based real day arithmetic | Lex compare on raw ISO strings (RESEARCH §A5) is the documented failure mode at year boundaries / clock skew; T-02-06 mitigation requires real day arithmetic |
+| 2026-04-29 | Plan 02-03: dock_scan_capture is a rclpy library (not a node) imported by calibrate_imu_yaw_node | Library shape lets Plan 02-08's synthetic_scan_kicp_publisher reuse the same code path in sim without standing up calibrate_imu_yaw_node's full state machine. Function returns; no long-lived subscriptions. |
+| 2026-04-29 | Plan 02-03: setup.py-route to install dock_scan_capture rejected; routed through CMakeLists.txt install(PROGRAMS ...) | Package is ament_cmake (no setup.py exists); existing convention for the 8 sibling Python scripts is install(PROGRAMS ...). Plan-vs-codebase mismatch fixed under Rule 3. |
+| 2026-04-29 | Plan 02-03: capture-call gate WILL trip on most installs (robot ~0.8 m off dock at insertion point) | Pitfall 2 stationarity gate is the canonical safeguard; failure path is non-fatal and documented; Plan 02-07 GUI Recapture button is the primary path for dock_scan.pcd to land. |
+| 2026-04-29 | Plan 02-03: tf_transformations import is lazy with inline math fallback | Avoids adding a hard runtime dependency on ros-kilted-tf-transformations just for a single quaternion-to-yaw conversion in the dock_scan extrinsic helper. |
+| 2026-04-29 | Plan 02-03: dock_scan_capture import wrapped in try/except with None sentinel | Calibration node must never crash on legacy installs that have not yet rebuilt mowgli_localization; degrade dock_scan add-on, keep IMU-yaw calibration intact. |
+| 2026-04-29 | Plan 02-03: CLAUDE.md AI #1 says calibrate_imu_yaw_node is rclcpp; disk reality is rclpy | A2 revision (2026-04-27) reverted Decision A back to upstream Python; CLAUDE.md is stale. Followed disk reality; flagged in 02-03-SUMMARY.md Coordination Risks for the human maintainer. |

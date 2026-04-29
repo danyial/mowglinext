@@ -21,6 +21,7 @@
 
 #include <geometry_msgs/msg/pose.hpp>
 #include <mowgli_interfaces/msg/checkpoint.hpp>
+#include <tf2/LinearMath/Matrix3x3.h>
 #include <tf2/LinearMath/Quaternion.h>
 
 #include "mowgli_coverage_planner/checkpoint_io.hpp"

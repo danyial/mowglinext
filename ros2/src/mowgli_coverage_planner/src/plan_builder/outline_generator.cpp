@@ -7,6 +7,7 @@
 
 #include "mowgli_coverage_planner/outline_generator.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -153,6 +154,17 @@ OutlineResult generate_outlines_impl(const geometry_msgs::msg::Polygon& poly,
                          " collapsed; halting outlines for this area";
         return result;
       }
+    }
+
+    // Operator preference: working-area outlines must be traversed CCW
+    // (signed_area < 0 by the convention of signed_area() above) so the
+    // blade auswurf consistently throws into the unmown interior. Obstacle
+    // outlines keep their natural direction from offset_polygon_inward —
+    // reversing them would flip the working-side toward the obstacle's
+    // exterior, which is the wrong side.
+    if (!obstacle_variant && signed_area(offset_poly) > 0.0)
+    {
+      std::reverse(offset_poly.begin(), offset_poly.end());
     }
 
     emit_outline_pass(offset_poly, seg_type, mowing_speed, seq,

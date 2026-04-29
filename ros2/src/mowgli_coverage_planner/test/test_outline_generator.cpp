@@ -11,6 +11,7 @@
 // vertex-direction yaw. Empty offset polygon (inset > polygon half-width)
 // yields a warning, not a crash.
 
+#include <algorithm>
 #include <cstddef>
 #include <vector>
 
@@ -103,6 +104,56 @@ TEST(OutlineGenerator, WorkingAreaTwoPassesDoublesCount)
   ASSERT_TRUE(two.warning.empty());
   // Two passes emit 2x as many waypoints as one pass.
   EXPECT_EQ(two.waypoints.size(), 2 * one.waypoints.size());
+}
+
+// Operator preference: working-area outlines must be CCW (signed_area<0).
+// Independent of the input polygon's winding order, the emitted waypoint
+// sequence must satisfy the shoelace test for counter-clockwise traversal
+// — that's how the blade auswurf consistently throws into the unmown
+// interior. Tests both orientations of the input polygon to guarantee
+// the normalisation, not just a happy-path passthrough.
+TEST(OutlineGenerator, WorkingAreaOutlinesAreCCW)
+{
+  // Helper: signed area of a waypoint sequence treated as a closed loop.
+  // Returns >0 for CW, <0 for CCW (matches outline_generator.cpp's convention).
+  auto signed_area_of_waypoints =
+      [](const std::vector<CoverageWaypoint>& wps) {
+        double a = 0.0;
+        const std::size_t n = wps.size();
+        for (std::size_t i = 0; i < n; ++i)
+        {
+          const std::size_t j = (i + 1) % n;
+          const double xi = wps[i].pose.pose.position.x;
+          const double yi = wps[i].pose.pose.position.y;
+          const double xj = wps[j].pose.pose.position.x;
+          const double yj = wps[j].pose.pose.position.y;
+          a += (xj - xi) * (yj + yi);
+        }
+        return a;
+      };
+
+  // make_square emits CCW vertices by construction. Verify the working-area
+  // path stays CCW.
+  {
+    auto poly_ccw = make_square(0.0, 0.0, 10.0);
+    auto result = generate_working_area_outlines(poly_ccw, make_robot(1), 0.5);
+    ASSERT_TRUE(result.warning.empty()) << result.warning;
+    ASSERT_GE(result.waypoints.size(), 4u);
+    EXPECT_LT(signed_area_of_waypoints(result.waypoints), 0.0)
+        << "CCW input should remain CCW (signed_area < 0)";
+  }
+
+  // Reverse the polygon → input is now CW. The generator must still emit
+  // CCW waypoints (this is the actual normalisation under test).
+  {
+    auto poly_cw = make_square(0.0, 0.0, 10.0);
+    std::reverse(poly_cw.points.begin(), poly_cw.points.end());
+    auto result = generate_working_area_outlines(poly_cw, make_robot(1), 0.5);
+    ASSERT_TRUE(result.warning.empty()) << result.warning;
+    ASSERT_GE(result.waypoints.size(), 4u);
+    EXPECT_LT(signed_area_of_waypoints(result.waypoints), 0.0)
+        << "CW input must be normalised to CCW (signed_area < 0)";
+  }
 }
 
 // Empty offset polygon -> warning, no crash.

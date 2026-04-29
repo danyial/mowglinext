@@ -57,9 +57,9 @@ find_package(kinematic_icp REQUIRED)
 
 add_library(mowgli_lidar_docking_lib STATIC
   src/dock_scan_io.cpp
+  src/confidence_metrics.cpp
   src/dock_approach_loader.cpp
   src/dock_scan_meta_loader.cpp
-  # src/confidence_metrics.cpp added by Plan 02-02 Task 2.
 )
 
 target_include_directories(mowgli_lidar_docking_lib PUBLIC
@@ -125,8 +125,7 @@ if(BUILD_TESTING)
   set(ament_cmake_uncrustify_FOUND TRUE)
   ament_lint_auto_find_test_dependencies()
 
-  # add_subdirectory(test) — enabled by Plan 02-02 Task 2 once gtest
-  # binaries land alongside confidence_metrics.cpp.
+  add_subdirectory(test)
 endif()
 
 # ---------------------------------------------------------------------------

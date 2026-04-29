@@ -8,8 +8,8 @@ The pull-based, ad-hoc strip planner inside `map_server_node` is being replaced 
 
 ### Phase 1 — Coverage Planner Rewrite
 
-**Status:** in progress (Waves 1-4 complete + Wave 5 automatable scope complete; only the Pi5 hardware smoke remains as an operator-gated checkpoint — SPEC AC-13)
-**Plans:** 9 plans (8 fully complete + 1 automatable-complete-pending-hardware)
+**Status:** in progress (Waves 1-4 complete + Wave 5 automatable scope complete; gap-closure Waves 6-7 planned for R-9 + R-11 from 01-VERIFICATION.md; only the Pi5 hardware smoke remains as an operator-gated checkpoint — SPEC AC-13)
+**Plans:** 11 plans (8 fully complete + 1 automatable-complete-pending-hardware + 2 gap-closure plans pending execution)
 **Goal:** Replace the existing pull-based strip planner with a new `coverage_planner_node` that emits a complete deterministic sequential `PoseStamped` waypoint plan via `PlanCoverage.action`, with metadata, YAML checkpoints, and pre-flight geometric validation. Plan inkludiert Undock/Approach/Dock-Segmente. BT folgt Plan sequenziell.
 
 **Canonical refs:**
@@ -41,3 +41,5 @@ Plans:
 - [x] 01-07-PLAN.md — mowgli_coverage_planner core: ValidatorPipeline (12 validators / 8 error codes) + OutlineGenerator + BoustrophedonSweeper + NarrowAreaStrategy + auto-rotate + resume snap + 7 unit tests → SUMMARY at `.planning/phases/01-coverage-planner-rewrite/01-07-SUMMARY.md` (commits `48447625`, `bc42d57f`, `cc818f3e`, `78ac2d66`). PLAN-07-PLACEHOLDER block in coverage_planner_node.cpp REPLACED with the full SPEC R-12 pipeline.
 - [x] 01-08-PLAN.md — BT integration: delete 5 legacy nodes + add PlanCoverageGoal + FollowCoveragePlan + main_tree.xml subtree + bt_context.hpp + safety unit tests → SUMMARY at `.planning/phases/01-coverage-planner-rewrite/01-08-SUMMARY.md` (commits `70543ec9`, `4b213d3a`, `698cbbd5`). mowgli_behavior build break (Plan 01-06) healed; T-08-01 + T-08-03 HIGH-severity safety threats regression-tested.
 - [~] 01-09-PLAN.md — E2E + Pi5 hardware smoke: launch wiring + e2e_test.py update + VALIDATION.md populate + Pi5 Eichenau garden checkpoint (SPEC AC-13). **Automatable scope COMPLETE** (T0 precondition fix + T1 launch+e2e + T2 VALIDATION populate; commits `d20e4025`, `08ae7808`, `5e0683b6`; SUMMARY at `.planning/phases/01-coverage-planner-rewrite/01-09-SUMMARY.md`). **T3 hardware smoke ⬜ pending operator verification** — see SUMMARY.md § "Hardware Checkpoint Procedure".
+- [ ] 01-10-PLAN.md — **Gap closure (R-9/R-11 root cause):** Add `uint32 area_index` to `CoverageWaypoint.msg`; regenerate firmware rosserial + Go + TypeScript bindings; refactor `PlanBuilder` to stamp `area_index` on every emitted waypoint via a single `stamp_and_push` lambda (UNDOCK/dock segments → UINT32_MAX sentinel; outline/sweep waypoints → loop index). 3 new gtest cases pin the contract.
+- [ ] 01-11-PLAN.md — **Gap closure (R-9/R-11 production fix):** Replace `req->checkpoint.area_index = last_wp.sequence_id` with `last_wp.area_index` in `dispatch_checkpoint_write`; add `BTContext::last_mow_angle_used_deg` propagated by PlanCoverageGoal from `PlanMetadata.mow_angle_used_deg`; early-return on UINT32_MAX sentinel for dock/undock segments. 3 new TEST_F cases run an in-process WriteCheckpoint stub server and capture the request payload to assert the canonical key.

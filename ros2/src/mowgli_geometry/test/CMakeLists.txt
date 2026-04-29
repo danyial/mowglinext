@@ -19,3 +19,6 @@ ament_target_dependencies(test_pca_axis geometry_msgs)
 
 ament_add_gtest(test_atomic_write test_atomic_write.cpp)
 target_link_libraries(test_atomic_write mowgli_geometry)
+
+ament_add_gtest(test_key_value_parser test_key_value_parser.cpp)
+target_link_libraries(test_key_value_parser mowgli_geometry)

@@ -33,10 +33,11 @@ Semantics:
 
 import math
 import os
+import re
 import time
+from typing import Optional
 
 import rclpy
-import yaml
 from geometry_msgs.msg import PoseWithCovarianceStamped, Quaternion
 from mowgli_interfaces.msg import (
     AbsolutePose,
@@ -53,6 +54,28 @@ from rclpy.qos import (
 from sensor_msgs.msg import Imu
 
 DOCK_CALIBRATION_PATH = "/ros2_ws/maps/dock_calibration.yaml"
+
+# Mirror of mowgli_geometry::parse_yaml_double (Phase 2 Plan 02-01 D-17). The
+# regex anchors on line start and tolerates leading whitespace so it accepts
+# both the legacy nested YAML (`dock_calibration:\n  dock_pose_x: 1.0`) and
+# the flat key=value form that Plan 02-03 will migrate calibrate_imu_yaw_node
+# to. This avoids a yaml-cpp / PyYAML dependency at runtime.
+_KV_RE = re.compile(
+    r'^\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*:\s*(.*?)\s*$',
+    re.MULTILINE,
+)
+
+
+def _parse_kv_double(content: str, key: str) -> Optional[float]:
+    """Return the float value for ``key`` in a flat key=value document, or
+    None if the key is absent or the value is not a number."""
+    for m in _KV_RE.finditer(content):
+        if m.group(1) == key:
+            try:
+                return float(m.group(2))
+            except ValueError:
+                return None
+    return None
 
 # HighLevelStatus.HIGH_LEVEL_STATE_AUTONOMOUS — duplicated as a module
 # constant so the gate check stays cheap (no msg attribute lookup per
@@ -174,16 +197,27 @@ class DockYawToSetPose(Node):
             return
         try:
             with open(DOCK_CALIBRATION_PATH) as fh:
-                data = yaml.safe_load(fh) or {}
-            cal = data.get("dock_calibration") or {}
-            yaw_rad = float(cal.get("dock_pose_yaw_rad"))
-            sigma_rad = float(cal.get("yaw_sigma_rad", 0.035))  # 2° default
-        except Exception as exc:
+                content = fh.read()
+        except OSError as exc:
             self.get_logger().error(
-                f"Failed to parse {DOCK_CALIBRATION_PATH}: {exc}. "
+                f"Failed to read {DOCK_CALIBRATION_PATH}: {exc}. "
                 "Falling back to /gnss/heading."
             )
             return
+        # Phase 2 Plan 02-01 D-17: parse via the shared key=value scanner
+        # (mirror of mowgli_geometry::parse_yaml_double). Tolerates both
+        # the legacy nested YAML written by calibrate_imu_yaw_node today
+        # and the flat schema Plan 02-03 will migrate to.
+        yaw_rad = _parse_kv_double(content, "dock_pose_yaw_rad")
+        if yaw_rad is None:
+            self.get_logger().error(
+                f"{DOCK_CALIBRATION_PATH} missing dock_pose_yaw_rad. "
+                "Falling back to /gnss/heading."
+            )
+            return
+        sigma_rad = _parse_kv_double(content, "yaw_sigma_rad")
+        if sigma_rad is None:
+            sigma_rad = 0.035  # 2° default — same as the legacy yaml.safe_load path
         self._file_yaw_rad = yaw_rad
         # Floor at σ=10° (variance 0.03) so the seed dominates gyro drift
         # while docked but does NOT outweigh the first /imu/cog_heading

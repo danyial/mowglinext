@@ -37,57 +37,17 @@
 #include <grid_map_ros/GridMapRosConverter.hpp>
 
 #include <mowgli_geometry/geometry.hpp>
+#include <mowgli_geometry/key_value_parser.hpp>
 
 namespace mowgli_map
 {
 
-// Simple parser for /ros2_ws/maps/dock_calibration.yaml — see the twin
-// helper in hardware_bridge_node.cpp. Duplicated locally to avoid
-// introducing a shared header for a few dozen lines.
-struct DockCalibrationFile
-{
-  double x{0.0};
-  double y{0.0};
-  double yaw_rad{0.0};
-};
-
-inline std::optional<double> parse_yaml_double(const std::string& content, const std::string& key)
-{
-  const std::string needle = key + ":";
-  auto pos = content.find(needle);
-  if (pos == std::string::npos)
-    return std::nullopt;
-  pos += needle.size();
-  while (pos < content.size() && (content[pos] == ' ' || content[pos] == '\t'))
-    ++pos;
-  auto end = pos;
-  while (end < content.size() && content[end] != '\n' && content[end] != '\r')
-    ++end;
-  try
-  {
-    return std::stod(content.substr(pos, end - pos));
-  }
-  catch (...)
-  {
-    return std::nullopt;
-  }
-}
-
-inline std::optional<DockCalibrationFile> load_dock_calibration_file(const std::string& path)
-{
-  std::ifstream f(path);
-  if (!f.good())
-    return std::nullopt;
-  std::stringstream ss;
-  ss << f.rdbuf();
-  const std::string content = ss.str();
-  auto x = parse_yaml_double(content, "dock_pose_x");
-  auto y = parse_yaml_double(content, "dock_pose_y");
-  auto yaw = parse_yaml_double(content, "dock_pose_yaw_rad");
-  if (!x || !y || !yaw)
-    return std::nullopt;
-  return DockCalibrationFile{*x, *y, *yaw};
-}
+// Dock-calibration parser used to live here as an inline copy. As of
+// Phase 2 Plan 02-01 (D-17 — single C++ scanner), the parser, the
+// DockCalibrationFile struct and the load_dock_calibration_file loader
+// have moved to <mowgli_geometry/key_value_parser.hpp>.
+using mowgli_geometry::DockCalibrationFile;
+using mowgli_geometry::load_dock_calibration_file;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Construction

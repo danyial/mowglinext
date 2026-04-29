@@ -25,6 +25,7 @@ find_package(sensor_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(nav_msgs REQUIRED)
 find_package(mowgli_interfaces REQUIRED)
+find_package(mowgli_geometry REQUIRED)
 
 # ---------------------------------------------------------------------------
 # Static library: mowgli_hardware_core
@@ -69,6 +70,7 @@ ament_target_dependencies(hardware_bridge_node
   geometry_msgs
   nav_msgs
   mowgli_interfaces
+  mowgli_geometry
 )
 
 # ---------------------------------------------------------------------------
@@ -140,6 +142,7 @@ ament_export_dependencies(
   geometry_msgs
   nav_msgs
   mowgli_interfaces
+  mowgli_geometry
 )
 
 ament_package()

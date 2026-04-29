@@ -154,6 +154,49 @@ def generate_launch_description() -> LaunchDescription:
         transit_speed = float(rt_rp.get("transit_speed", transit_speed))
         mowing_speed = float(rt_rp.get("mowing_speed", mowing_speed))
 
+    # Override dock pose with the runtime calibration file written by
+    # calibrate_imu_yaw_node's dock pre-phase / dock_yaw_to_set_pose's
+    # rising-edge auto-write. The file carries a GPS-derived ±1° yaw —
+    # significantly better than the install-time phone-compass value in
+    # mowgli_robot.yaml. Without this read, every container restart
+    # rolled docking_server.home_dock.pose back to the stale parameter
+    # value (issue #74) — operators were having to live-set it via
+    # `ros2 param set` after every redeploy.
+    #
+    # Same key-set as parse in hardware_bridge_node.cpp / BehaviorTreeNode
+    # / dock_yaw_to_set_pose.py, so all four agree on the dock pose at
+    # boot:
+    #   dock_calibration:
+    #     dock_pose_x: <metres>
+    #     dock_pose_y: <metres>
+    #     dock_pose_yaw_rad: <radians>
+    dock_calibration_path = "/ros2_ws/maps/dock_calibration.yaml"
+    if os.path.isfile(dock_calibration_path):
+        try:
+            with open(dock_calibration_path, "r") as f:
+                cal_doc = yaml.safe_load(f) or {}
+            cal = cal_doc.get("dock_calibration") or {}
+            cal_x = cal.get("dock_pose_x")
+            cal_y = cal.get("dock_pose_y")
+            cal_yaw = cal.get("dock_pose_yaw_rad")
+            if cal_x is not None and cal_y is not None and cal_yaw is not None:
+                dock_pose_x = float(cal_x)
+                dock_pose_y = float(cal_y)
+                dock_pose_yaw = float(cal_yaw)
+                print(
+                    "[navigation.launch.py] Loaded dock calibration from "
+                    f"{dock_calibration_path}: pose=({dock_pose_x:.3f}, "
+                    f"{dock_pose_y:.3f}, yaw={dock_pose_yaw:.4f} rad / "
+                    f"{dock_pose_yaw * 180.0 / 3.141592653589793:.2f}°) — "
+                    "overrides mowgli_robot.yaml"
+                )
+        except Exception as exc:  # noqa: BLE001 — launch-time best-effort
+            print(
+                "[navigation.launch.py] WARN failed to parse "
+                f"{dock_calibration_path}: {exc}. Falling back to "
+                "mowgli_robot.yaml dock pose."
+            )
+
     # Compute BT XML paths from installed package shares (not hardcoded).
     bt_nav_to_pose_xml = os.path.join(
         get_package_share_directory("mowgli_behavior"),

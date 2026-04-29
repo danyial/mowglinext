@@ -170,6 +170,16 @@ struct BTContext
   /// Coverage plan written by PlanCoverageGoal, consumed by FollowCoveragePlan.
   std::vector<mowgli_interfaces::msg::CoverageWaypoint> coverage_plan;
 
+  /// Mow angle (degrees, in [0, 180)) actually applied by the planner — copied
+  /// from PlanCoverage::Result::metadata.mow_angle_used_deg by PlanCoverageGoal
+  /// after a successful goal. FollowCoveragePlan stamps this into every
+  /// Checkpoint it dispatches via WriteCheckpoint.srv so the next plan's
+  /// derive_mow_angle (R-9) sees the correct previous-angle on read-back.
+  /// Defaults to 0.0 (= "no plan ran yet"); read by FollowCoveragePlan only
+  /// when an actual plan was loaded into coverage_plan, so the default is
+  /// never persisted to a real checkpoint file.
+  double last_mow_angle_used_deg{0.0};
+
   // -----------------------------------------------------------------------
   // TF buffer (shared across all BT nodes)
   // -----------------------------------------------------------------------

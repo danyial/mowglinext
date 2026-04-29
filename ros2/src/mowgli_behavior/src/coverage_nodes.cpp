@@ -147,11 +147,11 @@ BT::NodeStatus PlanCoverageGoal::onRunning()
   // Snapshot into BTContext blackboard. FollowCoveragePlan reads it on its
   // own onStart().
   ctx->coverage_plan = wrapped.result->plan;
+  ctx->last_mow_angle_used_deg = wrapped.result->metadata.mow_angle_used_deg;
 
   RCLCPP_INFO(ctx->node->get_logger(),
-              "PlanCoverageGoal: received plan with %zu waypoints (mow_angle=%.1f deg)",
-              ctx->coverage_plan.size(),
-              wrapped.result->metadata.mow_angle_used_deg);
+              "PlanCoverageGoal: stored mow_angle_used_deg=%.2f, plan size=%zu",
+              ctx->last_mow_angle_used_deg, ctx->coverage_plan.size());
 
   return BT::NodeStatus::SUCCESS;
 }

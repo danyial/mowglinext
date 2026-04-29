@@ -669,8 +669,13 @@ collision_monitor:
     polygons: ["PolygonSlow"]
     PolygonSlow:
       type: "polygon"
-      # Chassis + 15cm — slow to 30% when obstacle is close
-      points: "[[0.65, 0.35], [0.65, -0.35], [-0.25, -0.35], [-0.25, 0.35]]"
+      # Chassis + 15cm — slow to 30% when obstacle is close.
+      # Measured 2026-04-29: chassis 0.57x0.43, drive axle 0.18m behind
+      # chassis center → front bumper +0.465, rear bumper -0.105, sides
+      # ±0.215; with 0.15m slow margin: front +0.615, rear -0.255, sides
+      # ±0.365. Architecture Invariant #15: keep in sync with
+      # mowgli_robot.yaml robot_geometry block.
+      points: "[[0.615, 0.365], [0.615, -0.365], [-0.255, -0.365], [-0.255, 0.365]]"
       action_type: "slowdown"
       slowdown_ratio: 0.3
       # 12 points (was 6) — the dock structure sits near the polygon

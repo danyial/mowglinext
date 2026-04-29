@@ -17,9 +17,9 @@ mowgli:
     # -----------------------------------------------------------------
     mower_model: "YardForce500"
 
-    # Chassis dimensions (metres)
-    chassis_length: 0.60
-    chassis_width: 0.40
+    # Chassis dimensions (metres) — measured 2026-04-29 on hardware bench.
+    chassis_length: 0.57
+    chassis_width: 0.43
     chassis_height: 0.19
     chassis_mass_kg: 8.76
 
@@ -28,8 +28,8 @@ mowgli:
     wheel_width: 0.04
     wheel_track: 0.325         # centre-to-centre (from OpenMower)
     wheel_x_offset: 0.0       # drive wheels at base_link (wheel axis centre)
-    chassis_center_x: 0.20    # chassis geometric centre forward of wheel axis (m)
-                               # rear bumper at -0.10, front bumper at +0.50
+    chassis_center_x: 0.18    # chassis geometric centre forward of wheel axis (m)
+                               # measured 2026-04-29: rear bumper -0.105, front bumper +0.465
     # Informational only — no active code consumes this. Firmware uses
     # TICKS_PER_M=300 directly (board.h). With wheel_radius=0.04475
     # (circumference 0.281 m), that's ~84 ticks per revolution. The
@@ -70,9 +70,9 @@ mowgli:
     # in the same commit.
     # -----------------------------------------------------------------
     robot_geometry:
-      robot_length: 0.60
-      robot_width: 0.40
-      drive_axis_x_offset: -0.20
+      robot_length: 0.57         # measured 2026-04-29 (was 0.60 default)
+      robot_width: 0.43          # measured 2026-04-29 (was 0.40 default)
+      drive_axis_x_offset: -0.18 # = -chassis_center_x; measured 2026-04-29 (was -0.20)
       drive_axis_y_offset: 0.0
       blade_x_offset: 0.25
       blade_y_offset: 0.0

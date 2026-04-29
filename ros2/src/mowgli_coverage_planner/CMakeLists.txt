@@ -40,6 +40,10 @@ find_package(Boost REQUIRED)
 add_library(mowgli_coverage_planner_lib STATIC
   src/coverage_planner_node.cpp
   src/checkpoint_io.cpp
+  src/validators/validator_pipeline.cpp
+  src/plan_builder/outline_generator.cpp
+  src/plan_builder/boustrophedon_sweeper.cpp
+  src/plan_builder/narrow_area_strategy.cpp
 )
 
 target_include_directories(mowgli_coverage_planner_lib PUBLIC

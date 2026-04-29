@@ -8,8 +8,8 @@ The pull-based, ad-hoc strip planner inside `map_server_node` is being replaced 
 
 ### Phase 1 — Coverage Planner Rewrite
 
-**Status:** in progress (Waves 1-2 complete + Wave 3 half-complete — 5/9 plans done)
-**Plans:** 9 plans (5 complete, 4 remaining)
+**Status:** in progress (Waves 1-3 complete — 6/9 plans done)
+**Plans:** 9 plans (6 complete, 3 remaining)
 **Goal:** Replace the existing pull-based strip planner with a new `coverage_planner_node` that emits a complete deterministic sequential `PoseStamped` waypoint plan via `PlanCoverage.action`, with metadata, YAML checkpoints, and pre-flight geometric validation. Plan inkludiert Undock/Approach/Dock-Segmente. BT folgt Plan sequenziell.
 
 **Canonical refs:**
@@ -37,7 +37,7 @@ Plans:
 - [x] 01-03-PLAN.md — mowgli_robot.yaml robot_geometry: section + CLAUDE.md Architecture Invariants #7 rewrite + #15 (manual sync rule) → SUMMARY at `.planning/phases/01-coverage-planner-rewrite/01-03-SUMMARY.md` (commits `8bf52a71`, `fb7020c8`)
 - [x] 01-04-PLAN.md — GUI: useCoveragePlan hook + delete plan-preview-* layers + add coverage-plan-* layers + EditAreaModal narrow_area_strategy dropdown + MapToolbar Preview Plan button → SUMMARY at `.planning/phases/01-coverage-planner-rewrite/01-04-SUMMARY.md` (commits `66ffe815`, `504f490c`)
 - [x] 01-05-PLAN.md — mowgli_coverage_planner skeleton: action server + GetAllAreas client + WriteCheckpoint service + Checkpoint .kv I/O + 10 unit tests → SUMMARY at `.planning/phases/01-coverage-planner-rewrite/01-05-SUMMARY.md` (commits `4bce4424`, `72a4d925`, `14e51df4`)
-- [ ] 01-06-PLAN.md — map_server_node cleanup: GetAllAreas server + delete 5 pull-path .srv files + delete 8+ strip-planner functions + areas.yaml narrow_area_strategy round-trip
+- [x] 01-06-PLAN.md — map_server_node cleanup: GetAllAreas server + delete 4 pull-path .srv files + delete 8+ strip-planner functions + areas.yaml narrow_area_strategy round-trip → SUMMARY at `.planning/phases/01-coverage-planner-rewrite/01-06-SUMMARY.md` (commits `d5634dc0`, `73124c62`). NOTE: mowgli_behavior temporarily breaks; Plan 01-08 repairs it.
 - [ ] 01-07-PLAN.md — mowgli_coverage_planner core: ValidatorPipeline (10 SPEC points, 8 error codes) + OutlineGenerator + BoustrophedonSweeper + NarrowAreaStrategy + auto-rotate + resume + 7 unit tests
 - [ ] 01-08-PLAN.md — BT integration: delete 5 legacy nodes + add PlanCoverageGoal + FollowCoveragePlan + main_tree.xml subtree + bt_context.hpp + safety unit tests
 - [ ] 01-09-PLAN.md — E2E + Pi5 hardware smoke: launch wiring + e2e_test.py update + VALIDATION.md populate + Pi5 Eichenau garden checkpoint (SPEC AC-13)

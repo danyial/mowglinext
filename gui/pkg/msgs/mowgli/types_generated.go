@@ -63,6 +63,7 @@ type CoveragePath struct {
 type CoverageWaypoint struct {
 	Pose                      geometry.PoseStamped           `json:"pose"`
 	SequenceId                uint32                         `json:"sequence_id"`
+	AreaIndex                 uint32                         `json:"area_index"`
 	Speed                     float32                        `json:"speed"`
 	BladeEnabled              bool                           `json:"blade_enabled"`
 	SegmentType               uint8                          `json:"segment_type"`

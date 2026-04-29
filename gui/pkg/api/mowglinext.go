@@ -7,7 +7,6 @@ import (
 	"errors"
 	"log"
 	"net/http"
-	"strconv"
 	"time"
 
 	"github.com/cedbossneo/mowglinext/pkg/msgs/geometry"
@@ -36,34 +35,17 @@ func MowgliNextRoutes(r *gin.RouterGroup, provider types.IRosProvider) {
 	PreviewPlanRoute(group, provider)
 }
 
-// PreviewPlanRoute returns the static strip-plan preview for an area as JSON
-// so the GUI can render it as a polyline overlay before the operator presses
-// Start. Backed by /map_server_node/preview_plan service (#53 phase A).
+// PreviewPlanRoute returns 410 Gone — the legacy /map_server_node/preview_plan
+// service was deleted in Plan 01-06 alongside the strip planner. Plan preview
+// is now rendered client-side from the PlanCoverage.action result (CoverageWaypoint[]).
 //
 // @Router /mowglinext/preview-plan/:area_index [get]
 func PreviewPlanRoute(group *gin.RouterGroup, provider types.IRosProvider) {
+	_ = provider // retained for API signature compatibility
 	group.GET("/preview-plan/:area_index", func(c *gin.Context) {
-		idxStr := c.Param("area_index")
-		idx, err := strconv.ParseUint(idxStr, 10, 32)
-		if err != nil {
-			c.JSON(400, ErrorResponse{Error: "invalid area_index: " + err.Error()})
-			return
-		}
-		req := mowgli.PreviewPlanReq{AreaIndex: uint32(idx)}
-		var res mowgli.PreviewPlanRes
-		err = provider.CallService(c.Request.Context(),
-			"/map_server_node/preview_plan",
-			&req, &res,
-			"mowgli_interfaces/srv/PreviewPlan")
-		if err != nil {
-			c.JSON(500, ErrorResponse{Error: err.Error()})
-			return
-		}
-		if !res.Success {
-			c.JSON(500, ErrorResponse{Error: res.ErrorMessage})
-			return
-		}
-		c.JSON(200, res)
+		c.JSON(http.StatusGone, ErrorResponse{
+			Error: "preview_plan service removed; use PlanCoverage action for plan preview.",
+		})
 	})
 }
 

@@ -201,6 +201,7 @@ export const enum CoverageWaypointConstants {
 export type CoverageWaypoint = {
   pose?: PoseStamped;
   sequence_id?: number;
+  area_index?: number;
   speed?: number;
   blade_enabled?: boolean;
   segment_type?: number;

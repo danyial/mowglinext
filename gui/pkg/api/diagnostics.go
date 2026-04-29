@@ -11,7 +11,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cedbossneo/mowglinext/pkg/msgs/mowgli"
 	"github.com/cedbossneo/mowglinext/pkg/types"
 	"github.com/gin-gonic/gin"
 	"github.com/sirupsen/logrus"
@@ -179,25 +178,12 @@ func getDiagnosticsSnapshot(dockerProvider types.IDockerProvider, rosProvider ty
 			}
 		}
 
-		// --- Coverage (areas 0..19) ---
-		for i := uint32(0); i < 20; i++ {
-			req := mowgli.GetCoverageStatusReq{AreaIndex: i}
-			var res mowgli.GetCoverageStatusRes
-			if err := rosProvider.CallService(ctx, "/map_server_node/get_coverage_status", &req, &res, "mowgli_interfaces/srv/GetCoverageStatus"); err != nil {
-				break
-			}
-			if !res.Success {
-				break
-			}
-			snapshot.Coverage = append(snapshot.Coverage, AreaCoverageInfo{
-				AreaIndex:       i,
-				CoveragePercent: res.CoveragePercent,
-				TotalCells:      res.TotalCells,
-				MowedCells:      res.MowedCells,
-				ObstacleCells:   res.ObstacleCells,
-				StripsRemaining: res.StripsRemaining,
-			})
-		}
+		// --- Coverage status removed ---
+		// GetCoverageStatus.srv was deleted in Plan 01-06 alongside the legacy
+		// strip planner. Coverage progress is now tracked per-area via
+		// coverage_<n>.kv checkpoint files written by coverage_planner_node.
+		// A future diagnostics plan will wire coverage data via the new
+		// PlanCoverage.action feedback. Until then the coverage slice stays empty.
 
 		// --- Cross-checks ---
 		snapshot.CrossChecks = buildCrossChecks(dbProvider)

@@ -20,6 +20,8 @@ namespace mower_msgs
       _pose_type pose;
       typedef uint32_t _sequence_id_type;
       _sequence_id_type sequence_id;
+      typedef uint32_t _area_index_type;
+      _area_index_type area_index;
       typedef float _speed_type;
       _speed_type speed;
       typedef bool _blade_enabled_type;
@@ -38,6 +40,7 @@ namespace mower_msgs
     CoverageWaypoint():
       pose(),
       sequence_id(0),
+      area_index(0),
       speed(0),
       blade_enabled(0),
       segment_type(0)
@@ -58,6 +61,16 @@ namespace mower_msgs
       *(outbuffer + offset + 2) = (u_sequence_id.base >> (8 * 2)) & 0xFF;
       *(outbuffer + offset + 3) = (u_sequence_id.base >> (8 * 3)) & 0xFF;
       offset += sizeof(this->sequence_id);
+      union {
+        uint32_t real;
+        uint32_t base;
+      } u_area_index;
+      u_area_index.real = this->area_index;
+      *(outbuffer + offset + 0) = (u_area_index.base >> (8 * 0)) & 0xFF;
+      *(outbuffer + offset + 1) = (u_area_index.base >> (8 * 1)) & 0xFF;
+      *(outbuffer + offset + 2) = (u_area_index.base >> (8 * 2)) & 0xFF;
+      *(outbuffer + offset + 3) = (u_area_index.base >> (8 * 3)) & 0xFF;
+      offset += sizeof(this->area_index);
       union {
         float real;
         uint32_t base;
@@ -96,6 +109,17 @@ namespace mower_msgs
       this->sequence_id = u_sequence_id.real;
       offset += sizeof(this->sequence_id);
       union {
+        uint32_t real;
+        uint32_t base;
+      } u_area_index;
+      u_area_index.base = 0;
+      u_area_index.base |= ((uint32_t) (*(inbuffer + offset + 0))) << (8 * 0);
+      u_area_index.base |= ((uint32_t) (*(inbuffer + offset + 1))) << (8 * 1);
+      u_area_index.base |= ((uint32_t) (*(inbuffer + offset + 2))) << (8 * 2);
+      u_area_index.base |= ((uint32_t) (*(inbuffer + offset + 3))) << (8 * 3);
+      this->area_index = u_area_index.real;
+      offset += sizeof(this->area_index);
+      union {
         float real;
         uint32_t base;
       } u_speed;
@@ -120,7 +144,7 @@ namespace mower_msgs
     }
 
     virtual const char * getType() override { return "mower_msgs/CoverageWaypoint"; };
-    virtual const char * getMD5() override { return "a9b2ac4ebb81d9e7673f8b2f1bcae52b"; };
+    virtual const char * getMD5() override { return "cc3dbf146086f3b6a188c6b3796bceec"; };
 
   };
 

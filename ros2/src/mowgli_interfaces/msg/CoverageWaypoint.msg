@@ -2,6 +2,12 @@
 # Sparse plan: one pose per outline vertex / swath start / swath end / dock waypoint.
 geometry_msgs/PoseStamped pose       # in map frame (header.frame_id = "map")
 uint32 sequence_id                   # 0-based plan index, monotonic
+uint32 area_index                    # MapArea index this waypoint belongs to;
+                                     # UINT32_MAX (4294967295) for non-area
+                                     # waypoints (UNDOCK/RETURN_TO_DOCK/
+                                     # DOCK_APPROACH/DOCKING/start-pose TRANSIT).
+                                     # Used by FollowCoveragePlan to stamp the
+                                     # canonical Checkpoint key (R-9/R-11 fix).
 float32 speed                        # m/s; matches mowing_speed/transit_speed/undock_speed
 bool blade_enabled                   # true ONLY for OUTLINE_WORKING_AREA, OUTLINE_OBSTACLE, MOWING_BOUSTROPHEDON
 

@@ -3,7 +3,6 @@ package mowgli
 
 import (
 	"github.com/cedbossneo/mowglinext/pkg/msgs/geometry"
-	"github.com/cedbossneo/mowglinext/pkg/msgs/nav"
 )
 
 // AddMowingAreaReq for mowgli_interfaces/srv/AddMowingArea request.
@@ -79,21 +78,6 @@ type GetAllAreasRes struct {
 	Areas                     []MapArea                      `json:"areas"`
 }
 
-// GetCoverageStatusReq for mowgli_interfaces/srv/GetCoverageStatus request.
-type GetCoverageStatusReq struct {
-	AreaIndex                 uint32                         `json:"area_index"`
-}
-
-// GetCoverageStatusRes for mowgli_interfaces/srv/GetCoverageStatus response.
-type GetCoverageStatusRes struct {
-	Success                   bool                           `json:"success"`
-	CoveragePercent           float32                        `json:"coverage_percent"`
-	TotalCells                uint32                         `json:"total_cells"`
-	MowedCells                uint32                         `json:"mowed_cells"`
-	ObstacleCells             uint32                         `json:"obstacle_cells"`
-	StripsRemaining           uint32                         `json:"strips_remaining"`
-}
-
 // GetMowingAreaReq for mowgli_interfaces/srv/GetMowingArea request.
 type GetMowingAreaReq struct {
 	Index                     uint32                         `json:"index"`
@@ -103,40 +87,6 @@ type GetMowingAreaReq struct {
 type GetMowingAreaRes struct {
 	Area                      MapArea                        `json:"area"`
 	Success                   bool                           `json:"success"`
-}
-
-// GetNextStripReq for mowgli_interfaces/srv/GetNextStrip request.
-type GetNextStripReq struct {
-	AreaIndex                 uint32                         `json:"area_index"`
-	RobotX                    float64                        `json:"robot_x"`
-	RobotY                    float64                        `json:"robot_y"`
-	PreferHeadland            bool                           `json:"prefer_headland"`
-}
-
-// GetNextStripRes for mowgli_interfaces/srv/GetNextStrip response.
-type GetNextStripRes struct {
-	Success                   bool                           `json:"success"`
-	CoverageComplete          bool                           `json:"coverage_complete"`
-	StripPath                 nav.Path                       `json:"strip_path"`
-	TransitGoal               geometry.PoseStamped           `json:"transit_goal"`
-	CoveragePercent           float32                        `json:"coverage_percent"`
-	StripsRemaining           uint32                         `json:"strips_remaining"`
-	Phase                     string                         `json:"phase"`
-}
-
-// GetOutlinePathReq for mowgli_interfaces/srv/GetOutlinePath request.
-type GetOutlinePathReq struct {
-	AreaIndex                 uint32                         `json:"area_index"`
-	InsetM                    float32                        `json:"inset_m"`
-}
-
-// GetOutlinePathRes for mowgli_interfaces/srv/GetOutlinePath response.
-type GetOutlinePathRes struct {
-	Success                   bool                           `json:"success"`
-	ErrorMessage              string                         `json:"error_message"`
-	OutlinePath               nav.Path                       `json:"outline_path"`
-	EffectiveInsetM           float32                        `json:"effective_inset_m"`
-	NumVertices               uint32                         `json:"num_vertices"`
 }
 
 // GetRecoveryPointReq for mowgli_interfaces/srv/GetRecoveryPoint request (empty).
@@ -169,25 +119,6 @@ type MowerControlReq struct {
 // MowerControlRes for mowgli_interfaces/srv/MowerControl response.
 type MowerControlRes struct {
 	Success                   bool                           `json:"success"`
-}
-
-// PreviewPlanReq for mowgli_interfaces/srv/PreviewPlan request.
-type PreviewPlanReq struct {
-	AreaIndex                 uint32                         `json:"area_index"`
-}
-
-// PreviewPlanRes for mowgli_interfaces/srv/PreviewPlan response.
-type PreviewPlanRes struct {
-	Success                   bool                           `json:"success"`
-	ErrorMessage              string                         `json:"error_message"`
-	StripPlan                 nav.Path                       `json:"strip_plan"`
-	SegmentStarts             []uint32                       `json:"segment_starts"`
-	OutlinePath               nav.Path                       `json:"outline_path"`
-	OutlineInsetM             float32                        `json:"outline_inset_m"`
-	NumStrips                 uint32                         `json:"num_strips"`
-	PolygonDiagM              float32                        `json:"polygon_diag_m"`
-	EffectiveInsetM           float32                        `json:"effective_inset_m"`
-	MowAngleDeg               float32                        `json:"mow_angle_deg"`
 }
 
 // SetDockingPointReq for mowgli_interfaces/srv/SetDockingPoint request.

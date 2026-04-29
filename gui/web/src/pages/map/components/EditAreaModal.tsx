@@ -15,6 +15,15 @@ const AREA_TYPE_OPTIONS = [
     {value: 'obstacle', label: 'Obstacle'},
 ];
 
+// UI-SPEC §"narrow_area_strategy Dropdown" — labels are user-facing copy.
+// Values match MapArea.narrow_area_strategy uint8 constants
+// (0=SKIP, 1=OUTLINE_ONLY, 2=SPECIAL_PATTERN) per SPEC R-13 / Plan 01-01.
+const NARROW_AREA_OPTIONS = [
+    {value: 0, label: 'Skip'},
+    {value: 1, label: 'Outline only'},
+    {value: 2, label: 'Special pattern'},
+];
+
 export const EditAreaModal = ({open, area, onChange, onSave, onCancel}: EditAreaModalProps) => (
     <Modal
         open={open}
@@ -52,6 +61,23 @@ export const EditAreaModal = ({open, area, onChange, onSave, onCancel}: EditArea
                         value={area.mowing_order}
                         onChange={(v) => onChange({...area, mowing_order: v ?? 9999})}
                         style={{width: '100%'}}
+                    />
+                </Form.Item>
+            )}
+            {area.feature_type === 'workarea' && (
+                <Form.Item
+                    label="Narrow area strategy"
+                    extra={
+                        "Applies to strips shorter than 2× tool width. " +
+                        "'Outline only' adds an extra pass along the center. " +
+                        "'Special pattern' uses the area's long axis."
+                    }
+                >
+                    <Select
+                        key="narrowareastrategy"
+                        value={area.narrow_area_strategy ?? 0}
+                        onChange={(v) => onChange({...area, narrow_area_strategy: v})}
+                        options={NARROW_AREA_OPTIONS}
                     />
                 </Form.Item>
             )}

@@ -14,9 +14,13 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 #include <chrono>
+#include <cmath>
 #include <filesystem>
+#include <fstream>
 #include <memory>
 #include <mutex>
+#include <optional>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -66,6 +70,8 @@ public:
     context_->tf_listener = std::make_shared<tf2_ros::TransformListener>(*context_->tf_buffer);
     context_->helper_node = rclcpp::Node::make_shared("_bt_helper_node");
 
+    loadDockCalibration();
+
     setupSubscribers();
     setupServiceServer();
     setupBehaviorTree();
@@ -73,6 +79,73 @@ public:
     startNav2WaitTimer();
 
     RCLCPP_INFO(get_logger(), "mowgli_behavior_node ready");
+  }
+
+  /// Load /ros2_ws/maps/dock_calibration.yaml into BTContext::dock_{x,y,yaw}
+  /// at startup so PlanCoverageGoal sends the action goal with the real
+  /// dock pose instead of the (0,0,0) default. Same parser style as
+  /// hardware_bridge_node.cpp (key=value scan, no yaml-cpp dependency).
+  /// Falls back silently to the existing 0.0 defaults if the file is
+  /// missing or unparseable — matches the pre-existing initialiser-list
+  /// behaviour and lets the operator's first-charge auto-write of
+  /// dock_calibration.yaml take effect on the next BT-node restart.
+  void loadDockCalibration()
+  {
+    const std::string path = "/ros2_ws/maps/dock_calibration.yaml";
+    std::ifstream f(path);
+    if (!f.good())
+    {
+      RCLCPP_WARN(get_logger(),
+                  "loadDockCalibration: %s not found — PlanCoverageGoal "
+                  "will send dock=(0,0,0) until the file is written by "
+                  "calibrate_imu_yaw_node's dock pre-phase or the next "
+                  "charge-edge of dock_yaw_to_set_pose.",
+                  path.c_str());
+      return;
+    }
+    std::stringstream ss;
+    ss << f.rdbuf();
+    const std::string content = ss.str();
+
+    auto parse_double = [&](const std::string& key) -> std::optional<double> {
+      const std::string needle = key + ":";
+      auto pos = content.find(needle);
+      if (pos == std::string::npos) return std::nullopt;
+      pos += needle.size();
+      while (pos < content.size() &&
+             (content[pos] == ' ' || content[pos] == '\t')) ++pos;
+      auto end = pos;
+      while (end < content.size() && content[end] != '\n' && content[end] != '\r')
+        ++end;
+      try
+      {
+        return std::stod(content.substr(pos, end - pos));
+      }
+      catch (...)
+      {
+        return std::nullopt;
+      }
+    };
+
+    auto x = parse_double("dock_pose_x");
+    auto y = parse_double("dock_pose_y");
+    auto yaw = parse_double("dock_pose_yaw_rad");
+    if (!x || !y || !yaw)
+    {
+      RCLCPP_WARN(get_logger(),
+                  "loadDockCalibration: %s missing dock_pose_x / "
+                  "dock_pose_y / dock_pose_yaw_rad — keeping (0,0,0).",
+                  path.c_str());
+      return;
+    }
+    context_->dock_x = *x;
+    context_->dock_y = *y;
+    context_->dock_yaw = *yaw;
+    RCLCPP_INFO(get_logger(),
+                "loadDockCalibration: dock=(%.3f, %.3f, yaw=%.2f°) "
+                "from %s",
+                context_->dock_x, context_->dock_y,
+                context_->dock_yaw * 180.0 / M_PI, path.c_str());
   }
 
   std::shared_ptr<BTContext> context() const { return context_; }

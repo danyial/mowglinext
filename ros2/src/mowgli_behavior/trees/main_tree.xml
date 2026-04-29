@@ -478,7 +478,18 @@
               <SetMowerEnabled enabled="false"/>
               <PublishHighLevelStatus state="1" state_name="MOWING_COMPLETE"/>
               <SaveObstacles/>
-              <DockRobot dock_id="home_dock" dock_type="simple_charging_dock"/>
+              <!-- ReactiveFallback skips DockRobot if the robot already
+                   reached the dock via the FollowCoveragePlan DOCKING
+                   segment (charge-pin engaged → IsCharging=SUCCESS). Mirrors
+                   the HomeSequence/HomeOrAlreadyDocked pattern below;
+                   without this guard, opennav_docking re-runs its approach
+                   state machine despite the robot already being on contact,
+                   hangs in retries up to ~5 min, and the operator never
+                   sees IDLE_DOCKED. -->
+              <ReactiveFallback name="DockOrAlreadyDocked">
+                <IsCharging/>
+                <DockRobot dock_id="home_dock" dock_type="simple_charging_dock"/>
+              </ReactiveFallback>
               <PublishHighLevelStatus state="1" state_name="IDLE_DOCKED"/>
               <ClearCommand/>
             </Sequence>

@@ -40,6 +40,11 @@
   <test_depend>ament_lint_auto</test_depend>
   <test_depend>ament_lint_common</test_depend>
   <test_depend>ament_cmake_gtest</test_depend>
+  <test_depend>ament_cmake_pytest</test_depend>
+  <!-- Plan 02-03: dock_scan_capture pytest harness needs python3-pytest at
+       test time. python3-numpy is already an exec_depend above (Plan-2 Task
+       1 confirmed). -->
+  <test_depend>python3-pytest</test_depend>
 
   <export>
     <build_type>ament_cmake</build_type>

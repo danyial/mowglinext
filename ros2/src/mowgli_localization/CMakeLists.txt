@@ -131,6 +131,7 @@ install(
   PROGRAMS
     scripts/calibrate_imu_yaw_node.py
     scripts/cog_to_imu.py
+    scripts/dock_scan_capture.py
     scripts/dock_yaw_to_set_pose.py
     scripts/kinematic_icp_encoder_adapter.py
     scripts/kinematic_icp_scan_frame_relay.py
@@ -139,6 +140,12 @@ install(
     scripts/wheel_odom_tf_node.py
   DESTINATION lib/${PROJECT_NAME}
 )
+# dock_scan_capture.py is a LIBRARY module imported by
+# calibrate_imu_yaw_node (Plan 02-03 SPEC R-1), not a node entry point.
+# Installing under lib/${PROJECT_NAME}/ alongside calibrate_imu_yaw_node
+# keeps the flat `import dock_scan_capture` import path working at
+# runtime (ros2 run prepends that directory to sys.path before exec'ing
+# the script).
 
 # ---------------------------------------------------------------------------
 # Testing
@@ -151,6 +158,7 @@ if(BUILD_TESTING)
   ament_lint_auto_find_test_dependencies()
 
   find_package(ament_cmake_gtest REQUIRED)
+  find_package(ament_cmake_pytest REQUIRED)
 
   # ---- test_wheel_odometry ----
   # The kinematics test is pure C++ with no ROS2 dependencies; link only gtest.
@@ -161,6 +169,18 @@ if(BUILD_TESTING)
   target_include_directories(test_wheel_odometry PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
   )
+
+  # ---- Python tests (Plan 02-03: dock_scan_capture + calibrate hook-up) ----
+  # conftest.py prepends scripts/ to sys.path so `import dock_scan_capture`
+  # works without a setup.py (this package is ament_cmake, not
+  # ament_python). The tests pytest.importorskip("rclpy") so they self-
+  # disable in environments where rclpy is not on PYTHONPATH.
+  ament_add_pytest_test(test_dock_scan_capture
+    test/test_dock_scan_capture.py
+    TIMEOUT 60
+  )
+  # test_calibrate_imu_yaw_capture is registered by Plan 02-03 Task 2
+  # together with the calibrate_imu_yaw_node patch that creates it.
 endif()
 
 # ---------------------------------------------------------------------------

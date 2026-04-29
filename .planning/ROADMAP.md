@@ -55,6 +55,20 @@ Plans:
 
 **Out of scope (this phase):** Full Bezier/spline smoothing (separate future enhancement). Multi-pass obstacle outlines (stays at 1 pass).
 
+### Phase 3 — Live coverage visualisation in the GUI
+
+**Status:** ⬜ scheduled after Phase 2 (operator-UX; quality-of-life)
+**GH issues:** [#71](https://github.com/danyial/mowglinext/issues/71) (auto-show plan on Start), [#72](https://github.com/danyial/mowglinext/issues/72) (mowed-area overlay)
+**Goal:** Operator sees the planned coverage path the moment they click Start Mowing (no manual Preview Plan click) AND a live, semi-transparent overlay of which cells the blade has already covered during the session.
+
+Two parallel work streams:
+1. **#71 — Auto-plan-on-Start**: BT publishes its current coverage plan to a latched topic (`/behavior_tree_node/active_coverage_plan`). GUI subscribes and reuses the existing coverage-plan layer in `MapPage.tsx`. Plus: disable Preview Plan button when `state == AUTONOMOUS` (closes a known race condition where mid-mow Preview Plan triggers a BT re-plan and breaks the run).
+2. **#72 — Mowed-area overlay**: small server-side node (or extension to `mowgli_monitoring/diagnostics_node`) maintains a `nav_msgs/OccupancyGrid` of cells covered by the blade footprint while `mow_enabled=true`. Published on `/coverage_progress` (latched, transient_local). GUI consumes via the existing `coverageCells` subscription wiring. Persists per-session to `/ros2_ws/maps/`.
+
+**Why this phase**: Operator can't currently see whether the robot has covered everything or repeatedly missed a corner. Plus: the manual-Preview-Plan workaround actively broke a run on 2026-04-29 (mid-mow click triggered BT re-plan).
+
+**Out of scope (this phase):** Heatmap of coverage *count* per cell (multi-pass density). 3D visualisation. Historical playback of past sessions.
+
 ## Backlog (999.x — not scheduled, not blocking active milestone)
 
 Phases promoted out of `999.x` get renumbered into the active milestone via `/gsd-review-backlog`.

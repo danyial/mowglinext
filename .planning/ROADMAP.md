@@ -45,6 +45,16 @@ Plans:
 - [x] 01-11-PLAN.md — **Gap closure (R-9/R-11 production fix):** Replace `req->checkpoint.area_index = last_wp.sequence_id` with `last_wp.area_index` in `dispatch_checkpoint_write`; add `BTContext::last_mow_angle_used_deg` propagated by PlanCoverageGoal from `PlanMetadata.mow_angle_used_deg`; early-return on UINT32_MAX sentinel for dock/undock segments. 3 new TEST_F cases run an in-process WriteCheckpoint stub server and capture the request payload to assert the canonical key. → SUMMARY at `.planning/phases/01-coverage-planner-rewrite/01-11-SUMMARY.md` (commits `5405fa60`, `d1361536`, `354066e1`)
 
 
+### Phase 2 — Smooth outline-pass transitions (≤30° tangent change)
+
+**Status:** ⬜ NEXT (operator-blocking — promoted out of backlog 2026-04-29 after end-to-end mow surfaced the issue)
+**GH issue:** [#70](https://github.com/danyial/mowglinext/issues/70)
+**Goal:** Every transition between consecutive plan segments (outline-pass-N → N+1, last-outline → first-strip, strip → strip U-turns, last-strip → RETURN_TO_DOCK) has ≤ 30° tangent-angle change. The planner chooses the start vertex of each outline pass so its yaw smoothly continues the previous pass's exit; emits intermediate join waypoints if no vertex meets the threshold; applies the same heuristic to outline→strip and strip→strip turns.
+
+**Why next:** Phase 1 verified the planner end-to-end. First hardware mow run (2026-04-29 hexagon test) exposed visible operator-side ugliness AND physical impact: FTC PRE_ROTATE phases of 2.3 s per transition burning pose-drift budget. Pre-existing — not introduced by Phase 1 — but only became visible once the validator stopped rejecting plans wholesale.
+
+**Out of scope (this phase):** Full Bezier/spline smoothing (separate future enhancement). Multi-pass obstacle outlines (stays at 1 pass).
+
 ## Backlog (999.x — not scheduled, not blocking active milestone)
 
 Phases promoted out of `999.x` get renumbered into the active milestone via `/gsd-review-backlog`.

@@ -3,25 +3,25 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: unknown
-stopped_at: Completed 01-02
-last_updated: "2026-04-29T06:10:01.186Z"
+stopped_at: Completed 01-04
+last_updated: "2026-04-29T06:39:29.033Z"
 progress:
   total_phases: 1
   completed_phases: 0
   total_plans: 9
-  completed_plans: 3
-  percent: 33
+  completed_plans: 4
+  percent: 44
 ---
 
 # Project state
 
 ## Current phase
 
-1 — Coverage Planner Rewrite (Wave 1 + Wave-2 partial — 3/9 plans done)
+1 — Coverage Planner Rewrite (Wave 1 + Wave 2 complete — 4/9 plans done)
 
 ## Current Plan
 
-02 — mowgli_geometry header-only library (COMPLETE — committed `ae551459`, `63933306`, `351f4139`; SUMMARY at `.planning/phases/01-coverage-planner-rewrite/01-02-SUMMARY.md`)
+04 — GUI integration (COMPLETE — committed `66ffe815`, `504f490c`; SUMMARY at `.planning/phases/01-coverage-planner-rewrite/01-04-SUMMARY.md`)
 
 ## Total Plans
 
@@ -29,19 +29,19 @@ progress:
 
 ## Resume point
 
-- **Last completed step:** Plan 01-02 executed via `/gsd-execute-phase 1 --auto` (sequential mode). SUMMARY committed.
-- **Next step:** Plan 01-04 (GUI integration) is the remaining Wave 2 plan and is unblocked. After Wave 2 closes, Wave 3 opens 01-05 (coverage_planner skeleton) and 01-06 (map_server cleanup).
+- **Last completed step:** Plan 01-04 (GUI integration) executed via `/gsd-execute-phase 1 --auto` (sequential mode). SUMMARY committed.
+- **Next step:** Wave 3 opens — 01-05 (coverage_planner skeleton) and 01-06 (map_server cleanup) are both unblocked.
 - **Auto-chain flag persisted:** yes (`workflow._auto_chain_active=true` in `.planning/config.json`)
 - **Wave 1 plans:** 01-01 ✅ COMPLETE, 01-03 ✅ COMPLETE
-- **Wave 2 plans:** 01-02 ✅ COMPLETE, 01-04 (GUI integration)
+- **Wave 2 plans:** 01-02 ✅ COMPLETE, 01-04 ✅ COMPLETE
 - **Wave 3 plans:** 01-05 (coverage_planner skeleton), 01-06 (map_server cleanup)
 - **Wave 4 plans:** 01-07 (planner core: validators + sweep + narrow strategies), 01-08 (BT integration)
 - **Wave 5 plans:** 01-09 (E2E sim + Pi5 hardware smoke — operator-gated checkpoint)
 
 ## Last session
 
-- **Last session:** 2026-04-29T06:10:01.179Z
-- **Stopped at:** Completed 01-02
+- **Last session:** 2026-04-29T06:32:37Z
+- **Stopped at:** Completed 01-04
 - **Resume file:** None
 - **Blockers:** None
 
@@ -52,6 +52,7 @@ progress:
 | 01    | 01   | 12min    | 3     | 18    |
 | 01    | 03   | 3min     | 2     | 2     |
 | 01    | 02   | 9min     | 2     | 11    |
+| 01    | 04   | 15min    | 2     | 7     |
 
 ## Active branch
 
@@ -90,3 +91,7 @@ These were locked in chat on 2026-04-28 before `/gsd-spec-phase` started — the
 | 2026-04-29 | Plan 01-02: footprint_inside_polygon uses bg::covered_by, not bg::within | Coverage planning needs the footprint to be allowed to graze the working-area boundary on outline passes; bg::within would reject those poses. T-02-03 GIGO mitigation lives in Plan 05 ValidatorPipeline. |
 | 2026-04-29 | Plan 01-02: PCA degenerate-rank fallback uses the polygon's longest edge, not the SelfAdjointEigenSolver eigenvector | Robust against numerical noise on rank-1 covariances and matches SPECIAL_PATTERN intent (centerline along the dominant geometric span). |
 | 2026-04-29 | Plan 01-02: atomic_write returns false when fsync(parent_dir) fails | The file is in place at that point but durability across power loss is at risk. Failing loudly surfaces SD/ext4 health issues per RESEARCH §9.4 instead of silently degrading the checkpoint guarantee. |
+| 2026-04-29 | Plan 01-04: roslib@^2.x adopted as the browser-side rosbridge client (v1.x ships only ROS1 actionlib via /goal /cancel /feedback /result topics — incompatible with rosbridge_v2 + ROS2 Kilted) | v2's `Action` class uses the `send_action_goal` / `cancel_action_goal` rosbridge_v2 protocol ops, which is what the ROS2 stack speaks. v2 bundles its own types in `dist/RosLib.d.ts`; the v1-only `@types/roslib` package was removed. |
+| 2026-04-29 | Plan 01-04: Browser → rosbridge direct on `ws://<host>:9090`, not through the Go API server | The Go API has no generic action-relay endpoint, and adding one was outside this plan's GUI-only scope. Direct browser→rosbridge matches CLAUDE.md's documented rosbridge_server placement (docker/README.md:305). Operators must expose port 9090 from the mowgli-ros2 container. |
+| 2026-04-29 | Plan 01-04: Cross-segment-type bridge segments emit a TRANSIT line | Keeps the polyline visually continuous across segment_type boundaries; the D-11 match expression renders bridges grey, matching operator intuition that the robot physically transits between segments even when both endpoints share a non-TRANSIT label. |
+| 2026-04-29 | Plan 01-04: Removed the legacy coverageLineWidth zoom-interpolated tool_width memo | Tightly coupled to the deleted plan-preview-coverage layer; the new coverage-plan-line uses a fixed 2.5 px width per UI-SPEC. A tool_width-tracking band can be reintroduced in a future plan as a separate non-segment_type-coloured layer if operators want it back. |

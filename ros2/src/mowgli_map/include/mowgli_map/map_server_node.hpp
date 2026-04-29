@@ -46,6 +46,7 @@
 #include <mowgli_interfaces/msg/planning_params.hpp>
 #include <mowgli_interfaces/msg/status.hpp>
 #include <mowgli_interfaces/srv/add_mowing_area.hpp>
+#include <mowgli_interfaces/srv/get_all_areas.hpp>
 #include <mowgli_interfaces/srv/get_coverage_status.hpp>
 #include <mowgli_interfaces/srv/get_mowing_area.hpp>
 #include <mowgli_interfaces/srv/get_next_strip.hpp>
@@ -127,15 +128,13 @@ public:
   /// Build coverage cells OccupancyGrid (test-only accessor).
   nav_msgs::msg::OccupancyGrid coverage_cells_to_occupancy_grid() const;
 
-  /// Compute convex hull of 2D points (Andrew's monotone chain).
+  // ── DEPRECATED: kept only so existing tests link until Task 2 of Plan
+  //    01-06 deletes the bodies. New code calls mowgli_geometry::* directly.
+  //    All four wrappers forward to the namespaced implementation in
+  //    mowgli_geometry (Plan 01-02 promotion).
   static std::vector<std::pair<double, double>> convex_hull(
       std::vector<std::pair<double, double>> pts);
-
-  /// Compute optimal mow angle from polygon via Minimum Bounding Rectangle.
-  /// Returns angle in radians: the direction strips should run parallel to.
   static double compute_optimal_mow_angle(const geometry_msgs::msg::Polygon& poly);
-
-  /// Compute or retrieve cached strip layout for an area (test-only).
   void ensure_strip_layout(size_t area_index);
 
 private:
@@ -176,6 +175,14 @@ private:
   void on_get_mowing_area(const mowgli_interfaces::srv::GetMowingArea::Request::SharedPtr req,
                           mowgli_interfaces::srv::GetMowingArea::Response::SharedPtr res);
 
+  /// Snapshot of all known mowing/navigation areas (planner-side IPC).
+  /// Returns the public surface of every entry in `areas_` plus the new
+  /// per-area `narrow_area_strategy` field, for the new
+  /// coverage_planner_node which pulls a single snapshot per planning
+  /// request via /map_server_node/get_all_areas (Plan 01-05).
+  void on_get_all_areas(const mowgli_interfaces::srv::GetAllAreas::Request::SharedPtr req,
+                        mowgli_interfaces::srv::GetAllAreas::Response::SharedPtr res);
+
   void on_set_docking_point(const mowgli_interfaces::srv::SetDockingPoint::Request::SharedPtr req,
                             mowgli_interfaces::srv::SetDockingPoint::Response::SharedPtr res);
 
@@ -185,24 +192,15 @@ private:
   void on_load_areas(const std_srvs::srv::Trigger::Request::SharedPtr req,
                      std_srvs::srv::Trigger::Response::SharedPtr res);
 
-  // ── Strip planner services ───────────────────────────────────────────────
-
+  // ── DEPRECATED Strip planner services (Task 2 of Plan 01-06 deletes the
+  //    bodies + the .srv definitions in mowgli_interfaces).
   void on_get_next_strip(const mowgli_interfaces::srv::GetNextStrip::Request::SharedPtr req,
                          mowgli_interfaces::srv::GetNextStrip::Response::SharedPtr res);
-
   void on_get_coverage_status(
       const mowgli_interfaces::srv::GetCoverageStatus::Request::SharedPtr req,
       mowgli_interfaces::srv::GetCoverageStatus::Response::SharedPtr res);
-
-  /// Returns the full strip plan for an area as a single nav_msgs/Path so
-  /// the GUI can render it as an overlay before the operator presses Start.
-  /// Phase A of #53. Read-only — does not mutate planner state.
   void on_preview_plan(const mowgli_interfaces::srv::PreviewPlan::Request::SharedPtr req,
                        mowgli_interfaces::srv::PreviewPlan::Response::SharedPtr res);
-
-  /// Returns a closed-loop path along the polygon boundary, offset inward
-  /// by mower_radius + safety so the BT OutlineArea node can mow the
-  /// perimeter before the strip plan starts. Phase 2 of #50.
   void on_get_outline_path(
       const mowgli_interfaces::srv::GetOutlinePath::Request::SharedPtr req,
       mowgli_interfaces::srv::GetOutlinePath::Response::SharedPtr res);
@@ -257,6 +255,10 @@ private:
   void mark_cells_mowed(double x, double y);
 
   /// Check whether a point is inside a polygon (ray-casting algorithm).
+  /// Forwards to mowgli_geometry::point_in_polygon (Plan 01-02 promotion);
+  /// kept here as a thin static wrapper for legacy call-sites still in
+  /// transition. New code should call mowgli_geometry::point_in_polygon
+  /// directly.
   static bool point_in_polygon(const geometry_msgs::msg::Point32& pt,
                                const geometry_msgs::msg::Polygon& polygon) noexcept;
 
@@ -299,73 +301,48 @@ private:
   /// Reapply area classifications to the map grid (called after loading areas).
   void apply_area_classifications();
 
-  // ── Strip planner helpers ─────────────────────────────────────────────────
-
-  /// A single mowing strip (one column in boustrophedon order).
+  // ── DEPRECATED strip-planner internals (Task 2 of Plan 01-06 deletes
+  //    the bodies). Declarations kept so the existing translation unit
+  //    compiles between the Task 1 commit and the Task 2 commit.
   struct Strip
   {
-    geometry_msgs::msg::Point start;  // Map frame
-    geometry_msgs::msg::Point end;  // Map frame
+    geometry_msgs::msg::Point start;
+    geometry_msgs::msg::Point end;
     int column_index{0};
   };
-
-  /// Cached strip layout for an area.
   struct StripLayout
   {
     std::vector<Strip> strips;
     double mow_angle{0.0};
     bool valid{false};
   };
-
-  /// Find next unmowed strip. Returns false if coverage is complete.
-  bool find_next_unmowed_strip(
-      size_t area_index, double robot_x, double robot_y, Strip& out_strip, bool prefer_headland);
-
-  /// Convert a strip to a nav_msgs::Path, splitting at obstacle cells.
+  bool find_next_unmowed_strip(size_t area_index, double robot_x, double robot_y,
+                               Strip& out_strip, bool prefer_headland);
   nav_msgs::msg::Path strip_to_path(const Strip& strip, size_t area_index) const;
-
-  /// Compute the inward Minkowski offset of a (CCW or CW, simple) polygon
-  /// by `inset` metres. Each output vertex is the original vertex shifted
-  /// along the bisector of its two adjacent edges by `inset / sin(half-
-  /// interior-angle)`. Robust for convex polygons; concave polygons may
-  /// produce self-intersections that are tolerated as long as the
-  /// resulting boundary path stays inside the polygon — collision_monitor
-  /// catches the rest at runtime. Returns empty if polygon has < 3
-  /// vertices or all vertices collapse.
   std::vector<geometry_msgs::msg::Point32> offset_polygon_inward(
       const std::vector<geometry_msgs::msg::Point32>& poly, double inset) const;
-
-  /// Generate the multi-pass outline path for `area_index`. Encapsulates
-  /// the loop-over-passes / densify-edges logic shared between the
-  /// GetOutlinePath service and the PreviewPlan service so both stay in
-  /// sync. Pass 0 sits at outline_offset_ + mower_width_/2 inside the
-  /// polygon; subsequent passes step inward by mower_width_ - outline_-
-  /// overlap_. Returns an empty Path if the polygon collapses under the
-  /// requested inset.
   nav_msgs::msg::Path compute_outline_path(size_t area_index) const;
-
-  /// Check if a strip is sufficiently mowed (>threshold of cells done).
   bool is_strip_mowed(const Strip& strip, double threshold_pct = 0.2) const;
-
-  /// Check if a strip is blocked by obstacles (>threshold of obstacle cells).
-  /// Blocked strips are treated as "frontier" and skipped during planning.
   bool is_strip_blocked(const Strip& strip, double blocked_threshold = 0.5) const;
-
-  /// Compute coverage statistics for an area.
-  void compute_coverage_stats(size_t area_index,
-                              uint32_t& total,
-                              uint32_t& mowed,
+  void compute_coverage_stats(size_t area_index, uint32_t& total, uint32_t& mowed,
                               uint32_t& obstacle_cells) const;
 
   // ── Area entry ────────────────────────────────────────────────────────────
 
   /// A named area (mowing or navigation) with optional interior obstacles.
+  /// Mirrors mowgli_interfaces/MapArea — narrow_area_strategy carries the
+  /// per-area choice for handling areas too narrow for the standard
+  /// boustrophedon sweep (0=SKIP, 1=OUTLINE_ONLY, 2=SPECIAL_PATTERN per
+  /// SPEC R-13). Persisted through areas.yaml; default 0 (Skip) for
+  /// backward compatibility with legacy areas.yaml files that pre-date
+  /// the field.
   struct AreaEntry
   {
     std::string name;
     geometry_msgs::msg::Polygon polygon;
     std::vector<geometry_msgs::msg::Polygon> obstacles;
     bool is_navigation_area{false};
+    uint8_t narrow_area_strategy{0};
   };
 
   // ── Parameters ────────────────────────────────────────────────────────────
@@ -487,10 +464,10 @@ private:
   geometry_msgs::msg::Polygon dock_exclusion_polygon_;
   bool has_dock_exclusion_{false};
 
-  /// Cached strip layouts per area (recomputed when area changes).
+  // ── DEPRECATED strip-planner state (Task 2 deletes these). Kept here so
+  //    ensure_strip_layout / find_next_unmowed_strip can still compile in
+  //    the Task 1 intermediate commit.
   std::vector<StripLayout> strip_layouts_;
-
-  /// Track current strip index per area for boustrophedon ordering.
   std::vector<int> current_strip_idx_;
 
   // ── Publishers ────────────────────────────────────────────────────────────
@@ -532,14 +509,11 @@ private:
   rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr clear_map_srv_;
   rclcpp::Service<mowgli_interfaces::srv::AddMowingArea>::SharedPtr add_area_srv_;
   rclcpp::Service<mowgli_interfaces::srv::GetMowingArea>::SharedPtr get_mowing_area_srv_;
+  rclcpp::Service<mowgli_interfaces::srv::GetAllAreas>::SharedPtr get_all_areas_srv_;
   rclcpp::Service<mowgli_interfaces::srv::SetDockingPoint>::SharedPtr set_docking_point_srv_;
   rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr save_areas_srv_;
   rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr load_areas_srv_;
-  rclcpp::Service<mowgli_interfaces::srv::GetNextStrip>::SharedPtr get_next_strip_srv_;
-  rclcpp::Service<mowgli_interfaces::srv::GetCoverageStatus>::SharedPtr get_coverage_status_srv_;
   rclcpp::Service<mowgli_interfaces::srv::GetRecoveryPoint>::SharedPtr get_recovery_point_srv_;
-  rclcpp::Service<mowgli_interfaces::srv::PreviewPlan>::SharedPtr preview_plan_srv_;
-  rclcpp::Service<mowgli_interfaces::srv::GetOutlinePath>::SharedPtr get_outline_path_srv_;
   rclcpp::Service<mowgli_interfaces::srv::SetPlanningParams>::SharedPtr set_planning_params_srv_;
   rclcpp::Subscription<mowgli_interfaces::msg::PlanningParams>::SharedPtr planning_params_sub_;
 

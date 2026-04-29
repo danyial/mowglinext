@@ -36,6 +36,8 @@
 #include <grid_map_core/iterators/PolygonIterator.hpp>
 #include <grid_map_ros/GridMapRosConverter.hpp>
 
+#include <mowgli_geometry/geometry.hpp>
+
 namespace mowgli_map
 {
 
@@ -292,29 +294,15 @@ MapServerNode::MapServerNode(const rclcpp::NodeOptions& options)
         on_load_areas(req, res);
       });
 
-  // ── Strip planner services ──────────────────────────────────────────────
-  get_next_strip_srv_ = create_service<mowgli_interfaces::srv::GetNextStrip>(
-      "~/get_next_strip",
-      [this](const mowgli_interfaces::srv::GetNextStrip::Request::SharedPtr req,
-             mowgli_interfaces::srv::GetNextStrip::Response::SharedPtr res)
+  // Snapshot pull for the new coverage_planner_node (Plan 01-05). Called
+  // once per PlanCoverage.action goal so the planner gets a consistent
+  // view of all areas + obstacles + narrow_area_strategy.
+  get_all_areas_srv_ = create_service<mowgli_interfaces::srv::GetAllAreas>(
+      "~/get_all_areas",
+      [this](const mowgli_interfaces::srv::GetAllAreas::Request::SharedPtr req,
+             mowgli_interfaces::srv::GetAllAreas::Response::SharedPtr res)
       {
-        on_get_next_strip(req, res);
-      });
-
-  preview_plan_srv_ = create_service<mowgli_interfaces::srv::PreviewPlan>(
-      "~/preview_plan",
-      [this](const mowgli_interfaces::srv::PreviewPlan::Request::SharedPtr req,
-             mowgli_interfaces::srv::PreviewPlan::Response::SharedPtr res)
-      {
-        on_preview_plan(req, res);
-      });
-
-  get_outline_path_srv_ = create_service<mowgli_interfaces::srv::GetOutlinePath>(
-      "~/get_outline_path",
-      [this](const mowgli_interfaces::srv::GetOutlinePath::Request::SharedPtr req,
-             mowgli_interfaces::srv::GetOutlinePath::Response::SharedPtr res)
-      {
-        on_get_outline_path(req, res);
+        on_get_all_areas(req, res);
       });
 
   set_planning_params_srv_ = create_service<mowgli_interfaces::srv::SetPlanningParams>(
@@ -335,14 +323,6 @@ MapServerNode::MapServerNode(const rclcpp::NodeOptions& options)
       [this](mowgli_interfaces::msg::PlanningParams::ConstSharedPtr msg)
       {
         on_planning_params(msg);
-      });
-
-  get_coverage_status_srv_ = create_service<mowgli_interfaces::srv::GetCoverageStatus>(
-      "~/get_coverage_status",
-      [this](const mowgli_interfaces::srv::GetCoverageStatus::Request::SharedPtr req,
-             mowgli_interfaces::srv::GetCoverageStatus::Response::SharedPtr res)
-      {
-        on_get_coverage_status(req, res);
       });
 
   get_recovery_point_srv_ = create_service<mowgli_interfaces::srv::GetRecoveryPoint>(
@@ -1141,6 +1121,21 @@ void MapServerNode::on_add_area(const mowgli_interfaces::srv::AddMowingArea::Req
   entry.name = req->area.name;
   entry.polygon = polygon_msg;
   entry.is_navigation_area = req->is_navigation_area;
+  // Range-check narrow_area_strategy (SPEC R-13: 0=SKIP, 1=OUTLINE_ONLY,
+  // 2=SPECIAL_PATTERN). Out-of-range values from the GUI/CLI fall back to
+  // SKIP — the safe default — and are logged so the operator notices.
+  if (req->area.narrow_area_strategy <= 2)
+  {
+    entry.narrow_area_strategy = req->area.narrow_area_strategy;
+  }
+  else
+  {
+    RCLCPP_WARN(get_logger(),
+                "AddMowingArea: narrow_area_strategy=%u out of range [0..2]; "
+                "coercing to 0 (Skip)",
+                req->area.narrow_area_strategy);
+    entry.narrow_area_strategy = 0;
+  }
 
   // Store obstacle polygons from the MapArea message.
   // Only store in the area entry (static), NOT in obstacle_polygons_
@@ -1207,6 +1202,7 @@ void MapServerNode::on_get_mowing_area(
     // Start with user-defined (static) obstacles from config.
     res->area.obstacles = entry.obstacles;
     res->area.is_navigation_area = entry.is_navigation_area;
+    res->area.narrow_area_strategy = entry.narrow_area_strategy;
 
     // Also include persistent tracked obstacles from the obstacle tracker
     // so the coverage planner can avoid them in the initial plan.
@@ -1232,6 +1228,34 @@ void MapServerNode::on_get_mowing_area(
   {
     res->success = false;
   }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Snapshot pull for the new coverage_planner_node (Plan 01-05/06).
+// Single-shot read of every entry in `areas_` plus the per-area
+// `narrow_area_strategy` field. Internal IPC only — no auth gate, no
+// rate-limit; consistent with the rest of the LAN-only DDS service surface.
+// Threat T-06-03: only the public MapArea fields are copied here; internal
+// bookkeeping (mow_progress, dock_calibration, ftracker IDs) is NOT
+// included.
+// ─────────────────────────────────────────────────────────────────────────────
+void MapServerNode::on_get_all_areas(
+    const mowgli_interfaces::srv::GetAllAreas::Request::SharedPtr /*req*/,
+    mowgli_interfaces::srv::GetAllAreas::Response::SharedPtr res)
+{
+  std::lock_guard<std::mutex> lock(map_mutex_);
+  res->areas.reserve(areas_.size());
+  for (const auto& a : areas_)
+  {
+    mowgli_interfaces::msg::MapArea msg;
+    msg.name = a.name;
+    msg.area = a.polygon;
+    msg.obstacles = a.obstacles;
+    msg.is_navigation_area = a.is_navigation_area;
+    msg.narrow_area_strategy = a.narrow_area_strategy;
+    res->areas.push_back(std::move(msg));
+  }
+  RCLCPP_DEBUG(get_logger(), "GetAllAreas: returning %zu areas", res->areas.size());
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1330,7 +1354,7 @@ nav_msgs::msg::OccupancyGrid MapServerNode::coverage_cells_to_occupancy_grid() c
       {
         if (area.is_navigation_area)
           continue;
-        if (point_in_polygon(pt, area.polygon))
+        if (mowgli_geometry::point_in_polygon(pt, area.polygon))
         {
           in_area = true;
           break;
@@ -1389,28 +1413,10 @@ void MapServerNode::mark_cells_mowed(double x, double y)
 bool MapServerNode::point_in_polygon(const geometry_msgs::msg::Point32& pt,
                                      const geometry_msgs::msg::Polygon& polygon) noexcept
 {
-  const auto& pts = polygon.points;
-  const std::size_t n = pts.size();
-  if (n < 3)
-  {
-    return false;
-  }
-
-  bool inside = false;
-  for (std::size_t i = 0, j = n - 1; i < n; j = i++)
-  {
-    const float xi = pts[i].x, yi = pts[i].y;
-    const float xj = pts[j].x, yj = pts[j].y;
-
-    const bool intersect =
-        ((yi > pt.y) != (yj > pt.y)) && (pt.x < (xj - xi) * (pt.y - yi) / (yj - yi) + xi);
-
-    if (intersect)
-    {
-      inside = !inside;
-    }
-  }
-  return inside;
+  // Thin forwarder onto mowgli_geometry's promoted implementation
+  // (Plan 01-02). Kept temporarily so the strip-planner code paths that
+  // are deleted in Task 2 still link. Removed once Task 2 lands.
+  return mowgli_geometry::point_in_polygon(pt, polygon);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1536,7 +1542,7 @@ void MapServerNode::publish_keepout_mask()
       bool within_outside_margin = false;
       for (const auto& area : areas_)
       {
-        if (point_in_polygon(pt, area.polygon))
+        if (mowgli_geometry::point_in_polygon(pt, area.polygon))
         {
           inside_any = true;
           if (boundary_inner_margin_m_ > 0.0)
@@ -1600,7 +1606,7 @@ void MapServerNode::publish_keepout_mask()
 
       for (const auto& obs : obstacle_polygons_)
       {
-        if (point_in_polygon(pt, obs))
+        if (mowgli_geometry::point_in_polygon(pt, obs))
         {
           const int og_col = nx - 1 - r;
           const int og_row = ny - 1 - c;
@@ -1697,7 +1703,7 @@ void MapServerNode::publish_speed_mask()
         pt.y = static_cast<float>(pos.y());
         pt.z = 0.0F;
 
-        if (!point_in_polygon(pt, area.polygon))
+        if (!mowgli_geometry::point_in_polygon(pt, area.polygon))
         {
           continue;
         }
@@ -1784,7 +1790,7 @@ void MapServerNode::check_boundary_violation(double x, double y)
   double min_edge_dist = std::numeric_limits<double>::max();
   for (const auto& area : areas_)
   {
-    if (point_in_polygon(pt, area.polygon))
+    if (mowgli_geometry::point_in_polygon(pt, area.polygon))
     {
       inside_any = true;
       break;
@@ -1882,7 +1888,7 @@ void MapServerNode::on_get_recovery_point(
   robot_pt.z = 0.0F;
   for (const auto& area : areas_)
   {
-    if (point_in_polygon(robot_pt, area.polygon))
+    if (mowgli_geometry::point_in_polygon(robot_pt, area.polygon))
     {
       res->message = "already inside a mowing area";
       // Still return the current pose as a safe recovery — callers can
@@ -2208,6 +2214,8 @@ void MapServerNode::save_areas_to_file(const std::string& path)
     out << "area_" << i << "_name: " << area.name << "\n";
     out << "area_" << i << "_polygon: " << polygon_to_string(area.polygon) << "\n";
     out << "area_" << i << "_is_navigation: " << (area.is_navigation_area ? 1 : 0) << "\n";
+    out << "area_" << i << "_narrow_area_strategy: "
+        << static_cast<int>(area.narrow_area_strategy) << "\n";
     out << "area_" << i << "_obstacle_count: " << area.obstacles.size() << "\n";
     for (std::size_t j = 0; j < area.obstacles.size(); ++j)
     {
@@ -2300,6 +2308,28 @@ void MapServerNode::load_areas_from_file(const std::string& path)
     entry.name = get_str(prefix + "_name");
     entry.polygon = parse_polygon_string(get_str(prefix + "_polygon"));
     entry.is_navigation_area = (get_int(prefix + "_is_navigation", 0) != 0);
+
+    // narrow_area_strategy (SPEC R-13). Field is optional for forward-
+    // compatibility with legacy areas.yaml files written before Plan 01-06;
+    // sentinel default 0 = SKIP, the safe behaviour that legacy on-disk
+    // areas already implicitly have. T-06-01: any out-of-range value is
+    // clamped to 0 with a warning so disk corruption / hand-edits cannot
+    // produce undefined planner behaviour.
+    {
+      const int raw = get_int(prefix + "_narrow_area_strategy", 0);
+      if (raw < 0 || raw > 2)
+      {
+        RCLCPP_WARN(get_logger(),
+                    "areas.yaml %s: narrow_area_strategy=%d out of range [0..2]; "
+                    "coercing to 0 (Skip)",
+                    prefix.c_str(), raw);
+        entry.narrow_area_strategy = 0;
+      }
+      else
+      {
+        entry.narrow_area_strategy = static_cast<uint8_t>(raw);
+      }
+    }
 
     const int obs_count = get_int(prefix + "_obstacle_count", 0);
     for (int j = 0; j < obs_count; ++j)
@@ -3078,7 +3108,7 @@ void MapServerNode::compute_coverage_stats(size_t area_index,
     pt.x = static_cast<float>(pos.x());
     pt.y = static_cast<float>(pos.y());
 
-    if (!point_in_polygon(pt, area.polygon))
+    if (!mowgli_geometry::point_in_polygon(pt, area.polygon))
       continue;
 
     auto cell_type = static_cast<CellType>(static_cast<int>(class_layer((*it)(0), (*it)(1))));

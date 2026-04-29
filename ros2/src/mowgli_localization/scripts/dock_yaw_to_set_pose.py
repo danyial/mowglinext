@@ -96,11 +96,19 @@ class DockYawToSetPose(Node):
         # AUTONOMOUS / RECORDING / MANUAL_MOWING. Without this gate a
         # transient charging signal mid-mow (e.g. robot bumps the dock
         # latch during a failed undock) re-seeds the EKF and traps the
-        # robot in an undock/redock loop (issue #73). The BT publishes on
-        # ~/high_level_status which resolves to this absolute name.
+        # robot in an undock/redock loop (issue #73).
+        #
+        # The BT publishes on ~/high_level_status. The default class-name
+        # mangling would resolve that to /mowgli_behavior_node/... but the
+        # production launch (full_system.launch.py) overrides the node
+        # name to "behavior_tree_node", so the actual resolved topic is
+        # /behavior_tree_node/high_level_status. Hard-code that here —
+        # if the launch ever stops overriding the name, this will silently
+        # never receive messages and the gate will fall back to the
+        # rising-edge debounce alone.
         self._sub_high_level = self.create_subscription(
             HighLevelStatus,
-            "/mowgli_behavior_node/high_level_status",
+            "/behavior_tree_node/high_level_status",
             self._on_high_level_status,
             qos_reliable,
         )

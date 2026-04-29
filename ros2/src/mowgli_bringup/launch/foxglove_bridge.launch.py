@@ -77,16 +77,23 @@ def generate_launch_description() -> LaunchDescription:
                 "address": "0.0.0.0",
                 "send_buffer_limit": send_buffer_limit,
                 "num_threads": 0,
-                # foxglove_bridge defaults block any service or topic name
-                # containing `/_` (regex `^(?!.*/_).*$`). That filters out
-                # the auto-generated rclcpp_action service constellation
+                # foxglove_bridge has TWO independent filters that hide
+                # rclcpp_action's auto-generated service constellation
                 # (`<action>/_action/send_goal`, `_action/get_result`,
-                # `_action/cancel_goal`), which the GUI Preview Plan flow
-                # invokes via the foxglove client as if they were normal
-                # services. Loosen the regex to `.*` so action services
-                # are reachable. Keep the topic filter at the default
-                # since the GUI does not subscribe to `_action/feedback`
-                # or `_action/status` (Preview Plan is request/response).
+                # `_action/cancel_goal`):
+                #   1. `include_hidden=false` (default) drops every
+                #      ROS2-hidden name. ROS2 marks any name containing
+                #      a path segment starting with `_` as hidden, which
+                #      catches every `<action>/_action/...` path.
+                #   2. `service_whitelist` (default regex
+                #      `^(?!.*/_).*$`) further excludes names containing
+                #      `/_`, so even with `include_hidden=true` the
+                #      action services would still be rejected.
+                # Both have to be loosened. Topic filter stays at the
+                # default since Preview Plan is request/response and
+                # never subscribes to `_action/feedback` or
+                # `_action/status`.
+                "include_hidden": True,
                 "service_whitelist": [".*"],
             },
         ],

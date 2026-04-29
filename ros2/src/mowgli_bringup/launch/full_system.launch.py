@@ -292,6 +292,21 @@ def generate_launch_description() -> LaunchDescription:
     # ------------------------------------------------------------------
     # No topic/service whitelists — all topics are available for Foxglove
     # Studio debugging. The GUI backend throttles subscriptions on its side.
+    #
+    # foxglove_bridge has TWO independent filters that hide rclcpp_action's
+    # auto-generated service constellation (`<action>/_action/send_goal`,
+    # `_action/get_result`, `_action/cancel_goal`):
+    #   1. `include_hidden=False` (default) drops every ROS2-hidden name.
+    #      ROS2 marks any name with a path segment starting with `_` as
+    #      hidden, which catches every `<action>/_action/...` path.
+    #   2. `service_whitelist` (default regex `^(?!.*/_).*$`) further
+    #      excludes names containing `/_`, so even with include_hidden=True
+    #      the action services would still be rejected.
+    # The GUI Preview Plan relay calls send_goal / get_result through
+    # the existing foxglove client as if they were normal services
+    # (gui/pkg/foxglove/action.go), so both filters have to be loosened.
+    # Topic filter stays at the default — Preview Plan is request/response
+    # and never subscribes to `_action/feedback` or `_action/status`.
     foxglove_bridge_node = Node(
         condition=IfCondition(enable_foxglove),
         package="foxglove_bridge",
@@ -309,6 +324,8 @@ def generate_launch_description() -> LaunchDescription:
                     "services",
                     "connectionGraph",
                 ],
+                "include_hidden": True,
+                "service_whitelist": [".*"],
             },
         ],
     )

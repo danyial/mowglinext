@@ -69,6 +69,14 @@ type CoverageWaypoint struct {
 	SegmentType               uint8                          `json:"segment_type"`
 }
 
+// DockMatchConfidence matches mowgli_interfaces/msg/DockMatchConfidence.
+type DockMatchConfidence struct {
+	Header                    geometry.Header                `json:"header"`
+	InlierRatio               float32                        `json:"inlier_ratio"`
+	RmseM                     float32                        `json:"rmse_m"`
+	Trusted                   bool                           `json:"trusted"`
+}
+
 // ESCStatus matches mowgli_interfaces/msg/ESCStatus.
 type ESCStatus struct {
 	Status                    uint8                          `json:"status"`

@@ -207,6 +207,13 @@ export type CoverageWaypoint = {
   segment_type?: number;
 };
 
+export type DockMatchConfidence = {
+  header?: { stamp: { sec: number; nanosec: number }; frame_id: string };
+  inlier_ratio?: number;
+  rmse_m?: number;
+  trusted?: boolean;
+};
+
 export const enum ESCStatusConstants {
   ESC_STATUS_DISCONNECTED = 99,
   ESC_STATUS_ERROR = 100,
@@ -268,6 +275,12 @@ export type ImuRaw = {
   mx?: number;
   my?: number;
   mz?: number;
+};
+
+export const enum MapAreaConstants {
+  NARROW_AREA_SKIP = NARROW_AREA_SKIP,
+  NARROW_AREA_OUTLINE_ONLY = NARROW_AREA_OUTLINE_ONLY,
+  NARROW_AREA_SPECIAL_PATTERN = NARROW_AREA_SPECIAL_PATTERN,
 };
 
 export type MapArea = {

@@ -32,6 +32,7 @@ set(msg_files
   "msg/PlanMetadata.msg"
   "msg/PlanError.msg"
   "msg/Checkpoint.msg"
+  "msg/DockMatchConfidence.msg"
 )
 
 # Declare service files

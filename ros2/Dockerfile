@@ -36,6 +36,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ros-kilted-grid-map-core \
     ros-kilted-grid-map-ros \
     ros-kilted-grid-map-msgs \
+    # LaserScan ↔ PointCloud2 conversion (Phase 2 dock_scan_match)
+    ros-kilted-laser-geometry \
+    # PCL bridges + dev headers (Phase 2 dock_scan IO + scan-match)
+    ros-kilted-pcl-conversions \
+    ros-kilted-pcl-ros \
+    libpcl-dev \
+    # Sophus SE3 group (transitive kiss_icp dependency for KinematicICP)
+    libsophus-dev \
     # Diagnostics
     ros-kilted-diagnostic-msgs \
     ros-kilted-diagnostic-updater \

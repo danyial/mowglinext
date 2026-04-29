@@ -61,6 +61,7 @@ add_library(mowgli_lidar_docking_lib STATIC
   src/dock_approach_loader.cpp
   src/dock_scan_meta_loader.cpp
   src/kinematic_icp_dock_matcher.cpp
+  src/dock_scan_match_node.cpp
 )
 
 target_include_directories(mowgli_lidar_docking_lib PUBLIC
@@ -113,6 +114,27 @@ install(TARGETS mowgli_lidar_docking_lib
   LIBRARY DESTINATION lib
   RUNTIME DESTINATION bin
   INCLUDES DESTINATION include
+)
+
+# ---------------------------------------------------------------------------
+# Executable: dock_scan_match (Plan 02-04 SPEC R-2 + R-3)
+#
+# Production binary spawned by mowgli_bringup/launch/navigation.launch.py
+# under IfCondition(use_lidar). Subscribes /scan_kicp; publishes
+# /dock_match/pose + /dock_match/confidence at 10 Hz (D-07). All trust
+# thresholds + topic names + frame names are runtime-overridable via
+# config/dock_scan_match.yaml.
+# ---------------------------------------------------------------------------
+
+add_executable(dock_scan_match src/main.cpp)
+target_link_libraries(dock_scan_match mowgli_lidar_docking_lib)
+
+install(TARGETS dock_scan_match
+  DESTINATION lib/${PROJECT_NAME}
+)
+
+install(DIRECTORY config
+  DESTINATION share/${PROJECT_NAME}
 )
 
 # ---------------------------------------------------------------------------

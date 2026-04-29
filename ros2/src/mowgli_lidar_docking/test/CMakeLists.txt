@@ -42,3 +42,15 @@ target_link_libraries(test_idock_matcher_mock mowgli_lidar_docking_lib)
 # ---------------------------------------------------------------------------
 ament_add_gtest(test_kinematic_icp_dock_matcher test_kinematic_icp_dock_matcher.cpp)
 target_link_libraries(test_kinematic_icp_dock_matcher mowgli_lidar_docking_lib)
+
+# ---------------------------------------------------------------------------
+# Plan 02-04 Task 2 unit tests.
+#
+# DockScanMatchNode contract: degraded mode on missing PCD (Open Q3),
+# publish-rate baseline (R-2), corrupted-scan trust drop (R-3 acceptance),
+# mtime watcher path (Open Q4), TF distance gate (Pitfall 5), Pitfall 6
+# baseline trusted=false on first tick. Uses MockMatcher to avoid the
+# kiss_icp dependency in the gtest harness.
+# ---------------------------------------------------------------------------
+ament_add_gtest(test_dock_scan_match_node test_dock_scan_match_node.cpp)
+target_link_libraries(test_dock_scan_match_node mowgli_lidar_docking_lib)

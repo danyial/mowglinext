@@ -304,6 +304,35 @@ def generate_launch_description() -> LaunchDescription:
     )
 
     # ------------------------------------------------------------------
+    # 1b. dock_scan_match (Phase 2 — SPEC R-2 + R-3)
+    #     LiDAR-fine dock pose estimation. Subscribes /scan_kicp from
+    #     the parallel TF tree, publishes /dock_match/pose +
+    #     /dock_match/confidence at 10 Hz. Plan 02-05's
+    #     dock_yaw_to_set_pose cascade consumes these topics to seed the
+    #     EKF on docking — but only via /set_pose, never via TF
+    #     (Architecture Invariant #1). Plan 02-06's FineDock BT consumes
+    #     them for the 1.5 m crawl phase.
+    #
+    #     Gated on use_lidar so deployments without a LiDAR don't fail
+    #     to launch (matches the kinematic_icp_group gating).
+    # ------------------------------------------------------------------
+    dock_scan_match_node = Node(
+        package="mowgli_lidar_docking",
+        executable="dock_scan_match",
+        name="dock_scan_match",
+        output="screen",
+        parameters=[
+            os.path.join(
+                get_package_share_directory("mowgli_lidar_docking"),
+                "config",
+                "dock_scan_match.yaml",
+            ),
+            {"use_sim_time": use_sim_time},
+        ],
+        condition=IfCondition(use_lidar),
+    )
+
+    # ------------------------------------------------------------------
     # 4. Nav2 navigation (controllers, planners, behaviors, BT navigator)
     # ------------------------------------------------------------------
     # Gate Nav2 startup on the map→odom TF being available.
@@ -515,6 +544,12 @@ def generate_launch_description() -> LaunchDescription:
             # /encoder2/odom — retained under the robot_localization
             # backend to shore up dead-reckoning during GPS degradation).
             kinematic_icp_group,
+            # Phase 2 LiDAR-fine dock pose estimation. Spawned alongside
+            # kinematic_icp_group (both gate on use_lidar) and BEFORE
+            # wait_for_map_odom_tf so the matcher publishes
+            # confidence{trusted=false} from t=0 — Plan 02-05's seeder
+            # cascade waits for the first trusted frame on its own.
+            dock_scan_match_node,
             wait_for_map_odom_tf,
             nav2_after_tf,
         ]

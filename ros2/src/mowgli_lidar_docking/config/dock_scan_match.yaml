@@ -1,0 +1,45 @@
+# dock_scan_match.yaml — Plan 02-04 default ROS2 params for dock_scan_match.
+#
+# Phase 2 SPEC R-2 + R-3 + R-11. Per-deploy overrides go via launch
+# arguments OR a separate per-host YAML loaded after this one. All
+# defaults match the planning document's D-05 / D-07 / D-08 + SPEC R-3
+# values. crop_radius_m, voxel_size, etc. are tuned for the YF500 +
+# LD19 reference setup; recapture is required when changing chassis
+# geometry or LiDAR mount.
+#
+# Architecture Invariant #1: this node does NOT publish TF. The pose
+# topic is consumed by Plan 02-05's dock_yaw_to_set_pose cascade (which
+# writes /set_pose, NEVER /tf), and by Plan 02-06's FineDock BT.
+
+dock_scan_match:
+  ros__parameters:
+    # ---- Cropping (D-05) ----
+    crop_radius_m: 3.0                 # ±3 m around the dock anchor
+
+    # ---- Cadence (D-07; SPEC R-2 minimum 5 Hz) ----
+    publish_rate_hz: 10.0
+
+    # ---- ICP (D-08) ----
+    max_correspondence_distance: 0.30  # 30 cm gate per inlier
+    max_iterations: 20
+
+    # ---- Trust gate (SPEC R-3) ----
+    min_inlier_ratio: 0.70             # >= 70 % inliers required
+    max_rmse_m: 0.05                   # <= 5 cm RMSE required
+
+    # ---- TF distance gate (Pitfall 5 mitigation) ----
+    gate_distance_m: 5.0               # skip ICP when robot > 5 m from dock
+
+    # ---- File paths ----
+    dock_calibration_path: "/ros2_ws/maps/dock_calibration.yaml"
+    dock_scan_path: "/ros2_ws/maps/dock_scan.pcd"
+    dock_scan_meta_path: "/ros2_ws/maps/dock_scan_meta.yaml"
+
+    # ---- Topics ----
+    scan_topic: "/scan_kicp"
+    pose_topic: "/dock_match/pose"
+    confidence_topic: "/dock_match/confidence"
+
+    # ---- Frames (parallel TF tree per Architecture Invariant #1) ----
+    robot_frame: "base_footprint_wheels"
+    map_frame: "map"

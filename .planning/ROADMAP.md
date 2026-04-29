@@ -8,8 +8,8 @@ The pull-based, ad-hoc strip planner inside `map_server_node` is being replaced 
 
 ### Phase 1 — Coverage Planner Rewrite
 
-**Status:** in progress (Waves 1-4 complete — 8/9 plans done; only Wave 5 hardware checkpoint remaining)
-**Plans:** 9 plans (7 complete, 2 remaining)
+**Status:** in progress (Waves 1-4 complete + Wave 5 automatable scope complete; only the Pi5 hardware smoke remains as an operator-gated checkpoint — SPEC AC-13)
+**Plans:** 9 plans (8 fully complete + 1 automatable-complete-pending-hardware)
 **Goal:** Replace the existing pull-based strip planner with a new `coverage_planner_node` that emits a complete deterministic sequential `PoseStamped` waypoint plan via `PlanCoverage.action`, with metadata, YAML checkpoints, and pre-flight geometric validation. Plan inkludiert Undock/Approach/Dock-Segmente. BT folgt Plan sequenziell.
 
 **Canonical refs:**
@@ -40,4 +40,4 @@ Plans:
 - [x] 01-06-PLAN.md — map_server_node cleanup: GetAllAreas server + delete 4 pull-path .srv files + delete 8+ strip-planner functions + areas.yaml narrow_area_strategy round-trip → SUMMARY at `.planning/phases/01-coverage-planner-rewrite/01-06-SUMMARY.md` (commits `d5634dc0`, `73124c62`). NOTE: mowgli_behavior temporarily breaks; Plan 01-08 repairs it.
 - [x] 01-07-PLAN.md — mowgli_coverage_planner core: ValidatorPipeline (12 validators / 8 error codes) + OutlineGenerator + BoustrophedonSweeper + NarrowAreaStrategy + auto-rotate + resume snap + 7 unit tests → SUMMARY at `.planning/phases/01-coverage-planner-rewrite/01-07-SUMMARY.md` (commits `48447625`, `bc42d57f`, `cc818f3e`, `78ac2d66`). PLAN-07-PLACEHOLDER block in coverage_planner_node.cpp REPLACED with the full SPEC R-12 pipeline.
 - [x] 01-08-PLAN.md — BT integration: delete 5 legacy nodes + add PlanCoverageGoal + FollowCoveragePlan + main_tree.xml subtree + bt_context.hpp + safety unit tests → SUMMARY at `.planning/phases/01-coverage-planner-rewrite/01-08-SUMMARY.md` (commits `70543ec9`, `4b213d3a`, `698cbbd5`). mowgli_behavior build break (Plan 01-06) healed; T-08-01 + T-08-03 HIGH-severity safety threats regression-tested.
-- [ ] 01-09-PLAN.md — E2E + Pi5 hardware smoke: launch wiring + e2e_test.py update + VALIDATION.md populate + Pi5 Eichenau garden checkpoint (SPEC AC-13)
+- [~] 01-09-PLAN.md — E2E + Pi5 hardware smoke: launch wiring + e2e_test.py update + VALIDATION.md populate + Pi5 Eichenau garden checkpoint (SPEC AC-13). **Automatable scope COMPLETE** (T0 precondition fix + T1 launch+e2e + T2 VALIDATION populate; commits `d20e4025`, `08ae7808`, `5e0683b6`; SUMMARY at `.planning/phases/01-coverage-planner-rewrite/01-09-SUMMARY.md`). **T3 hardware smoke ⬜ pending operator verification** — see SUMMARY.md § "Hardware Checkpoint Procedure".

@@ -2,26 +2,26 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: unknown
-stopped_at: Completed 01-08
-last_updated: "2026-04-29T08:26:33.034Z"
+status: hardware-smoke-pending
+stopped_at: 01-09 automatable scope complete; SPEC AC-13 Pi5 garden smoke pending
+last_updated: "2026-04-29T09:30:00.000Z"
 progress:
   total_phases: 1
   completed_phases: 0
   total_plans: 9
   completed_plans: 8
-  percent: 89
+  percent: 95
 ---
 
 # Project state
 
 ## Current phase
 
-1 — Coverage Planner Rewrite (Waves 1-4 complete — 8/9 plans done; 01-09 next)
+1 — Coverage Planner Rewrite (Waves 1-4 complete + Wave 5 automatable scope complete; SPEC AC-13 Pi5 hardware smoke pending operator verification)
 
 ## Current Plan
 
-08 — BT integration (COMPLETE — committed `70543ec9`, `4b213d3a`, `698cbbd5`; SUMMARY at `.planning/phases/01-coverage-planner-rewrite/01-08-SUMMARY.md`)
+09 — E2E sim + Pi5 hardware smoke (AUTOMATABLE SCOPE COMPLETE — committed `d20e4025`, `08ae7808`, `5e0683b6`; SUMMARY at `.planning/phases/01-coverage-planner-rewrite/01-09-SUMMARY.md`. Hardware checkpoint Task 3 is operator-gated and remains ⬜ pending.)
 
 ## Total Plans
 
@@ -29,21 +29,21 @@ progress:
 
 ## Resume point
 
-- **Last completed step:** Plan 01-08 (BT integration) executed via `/gsd-execute-phase 1 --auto` (sequential mode). SUMMARY committed. mowgli_behavior build break healed.
-- **Next step:** Wave 5 — 01-09 (E2E sim + Pi5 hardware smoke — operator-gated checkpoint).
+- **Last completed step:** Plan 01-09 automatable scope (T0 precondition fix + T1 launch+e2e + T2 VALIDATION populate). SUMMARY committed. Build precondition healed (mowgli_geometry INTERFACE export propagation fixed in mowgli_coverage_planner consumer).
+- **Next step:** SPEC AC-13 hardware smoke on Pi5 in Eichenau garden (operator-gated — see `.planning/phases/01-coverage-planner-rewrite/01-09-SUMMARY.md` § "Hardware Checkpoint Procedure").
 - **Auto-chain flag persisted:** yes (`workflow._auto_chain_active=true` in `.planning/config.json`)
 - **Wave 1 plans:** 01-01 ✅ COMPLETE, 01-03 ✅ COMPLETE
 - **Wave 2 plans:** 01-02 ✅ COMPLETE, 01-04 ✅ COMPLETE
 - **Wave 3 plans:** 01-05 ✅ COMPLETE, 01-06 ✅ COMPLETE
 - **Wave 4 plans:** 01-07 ✅ COMPLETE, 01-08 ✅ COMPLETE
-- **Wave 5 plans:** 01-09 (E2E sim + Pi5 hardware smoke — operator-gated checkpoint)
+- **Wave 5 plans:** 01-09 🟡 AUTOMATABLE COMPLETE (T0+T1+T2 ✅; T3 Pi5 hardware smoke ⬜ pending operator verification)
 
 ## Last session
 
-- **Last session:** 2026-04-29T08:25:55.904Z
-- **Stopped at:** Completed 01-08
-- **Resume file:** None
-- **Blockers:** None
+- **Last session:** 2026-04-29T09:30:00.000Z
+- **Stopped at:** Completed 01-09 automatable scope (T0+T1+T2); SPEC AC-13 Pi5 garden smoke pending
+- **Resume file:** `.planning/phases/01-coverage-planner-rewrite/01-09-SUMMARY.md` § "Hardware Checkpoint Procedure"
+- **Blockers:** SPEC AC-13 — operator must execute the Pi5 Eichenau garden smoke (procedure documented in 01-09-SUMMARY.md). Until then, Phase 1 remains in "automatable complete, hardware-verified pending" state.
 
 ## Performance Metrics
 
@@ -57,6 +57,7 @@ progress:
 | 01    | 06   | 25min    | 2     | 10    |
 | 01    | 07   | 20min    | 2     | 22    |
 | 01    | 08   | 34min    | 2     | 13    |
+| 01    | 09   | 25min    | 3 (T0+T1+T2; T3 pending) | 7 |
 
 ## Active branch
 
@@ -117,3 +118,7 @@ These were locked in chat on 2026-04-28 before `/gsd-spec-phase` started — the
 | 2026-04-29 | Plan 01-08: setBladeEnabled changed from private to virtual+protected for unit-test override | Same-process Cyclone DDS service round-trips proved flaky in single-process gtest setups; the in-process software contract (onHalted invokes setBladeEnabled(false)) is what the test asserts; the DDS edge is exercised by Plan 01-09 hardware/sim test. |
 | 2026-04-29 | Plan 01-08: PreFlightCheck migrated from /map_server_node/get_coverage_status (deleted by Plan 01-06) to /map_server_node/get_all_areas | Treats any non-navigation polygon as a valid mowing area. Cleaner than the area_index=0 hack the deleted service required. |
 | 2026-04-29 | Plan 01-08: IncrementSkippedSwaths node + BTContext::skipped_swaths field deleted entirely | Only consumer was the deleted SkipStrip subtree of the legacy AreaLoop; HighLevelStatus's swath-progress fields zeroed until plan-level progress is wired via PlanCoverage feedback in a future plan. |
+| 2026-04-29 | Plan 01-09: T0 precondition fix moves mowgli_geometry from target_link_libraries to ament_target_dependencies in mowgli_coverage_planner | Root cause is consumer-side namespace mismatch — exported target is `mowgli_geometry::mowgli_geometry`, consumer used bare `mowgli_geometry`. ament_target_dependencies reliably reads `${mowgli_geometry_INCLUDE_DIRS}` and matches mowgli_map's working pattern. |
+| 2026-04-29 | Plan 01-09: coverage_planner_node added to all three top-level launch entry points (full_system, sim_full_system, sim_small_garden), not "mowgli_bringup.launch.py" | The plan-instructed file does not exist; the de-facto bringup entry points are these three launch files (one per environment). All three launch coverage_planner_node alongside map_server_node sharing the same robot_config (D-07 lockstep). |
+| 2026-04-29 | Plan 01-09: e2e_test.py PlanCoverage probe runs BEFORE COMMAND_START | Independent rclpy ActionClient probe gives the test a non-flaky pre-START gate that doesn't depend on BT cooperation. Asserts plan-shape invariants (50<=N<=400, OUTLINE_WORKING_AREA present, blade-rule SPEC R-4) regardless of whether the BT later reaches MOWING. |
+| 2026-04-29 | Plan 01-09: SUMMARY.md is intentionally non-final | SPEC AC-13 hardware smoke is operator-gated (autonomous: false). T0+T1+T2 are ✅ green; T3 (Pi5 Eichenau garden) is ⬜ pending. Phase 1 is in "automatable scope complete, hardware-verified pending" until the operator returns the smoke verdict. |

@@ -424,6 +424,28 @@ void FTCController::setPlan(const nav_msgs::msg::Path& path)
 
   nav_msgs::msg::Path pub_path;
 
+  // Boustrophedon sweep strips come as 2-pose start+end pairs by design
+  // (mowgli_coverage_planner Architecture Invariant #7: "the plan is sparse,
+  // Nav2 FollowPath densifies during execution"). FTCController's PID
+  // look-ahead needs ≥3 reference poses, so we densify the 2-pose case
+  // with a single linearly-interpolated midpoint here. Keeps the upstream
+  // plan sparse-by-design without forcing the sweeper to emit redundant
+  // intermediate waypoints.
+  if (global_plan_.size() == 2)
+  {
+    geometry_msgs::msg::PoseStamped mid = global_plan_[0];
+    mid.pose.position.x =
+        0.5 * (global_plan_[0].pose.position.x + global_plan_[1].pose.position.x);
+    mid.pose.position.y =
+        0.5 * (global_plan_[0].pose.position.y + global_plan_[1].pose.position.y);
+    mid.pose.position.z =
+        0.5 * (global_plan_[0].pose.position.z + global_plan_[1].pose.position.z);
+    // Midpoint inherits start-pose orientation (= strip direction). Keeps
+    // the segment heading consistent for the PRE_ROTATE → FOLLOWING state
+    // machine.
+    global_plan_.insert(global_plan_.begin() + 1, mid);
+  }
+
   if (global_plan_.size() > 2)
   {
     // Duplicate last point so the carrot can exactly reach goal.
@@ -439,7 +461,7 @@ void FTCController::setPlan(const nav_msgs::msg::Path& path)
   else
   {
     RCLCPP_WARN(logger_,
-                "FTCController: global plan has fewer than 3 poses (%zu) - cancelling.",
+                "FTCController: global plan has fewer than 2 poses (%zu) - cancelling.",
                 global_plan_.size());
     current_state_ = PlannerState::FINISHED;
     state_entered_time_ = clock_->now();

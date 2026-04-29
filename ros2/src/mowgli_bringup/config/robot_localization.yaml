@@ -86,10 +86,13 @@ ekf_odom_node:
     odom0_relative: false
     odom0_nodelay: false
 
-    # ─ IMU — gyro_z only (no magnetometer → no absolute yaw) ─
+    # ─ IMU — gyro_z + roll/pitch (absolute yaw fused via imu2 in ekf_map) ─
     # /imu/data carries identity orientation with loose yaw covariance (99);
     # tight roll/pitch (0.001) so orientation fusion here is roll+pitch only.
-    # Angular velocity z is the primary short-term yaw source.
+    # Angular velocity z is the primary short-term yaw source. Absolute yaw
+    # comes from mag_yaw_publisher (/imu/mag_yaw) and cog_to_imu
+    # (/imu/cog_heading) into ekf_map_node — never into ekf_odom_node, so
+    # the local odom frame stays continuous and never jumps.
     imu0: /imu/data
     imu0_config: [false, false, false,    # x, y, z
                   true,  true,  false,    # roll, pitch, yaw — only roll/pitch
@@ -220,6 +223,28 @@ ekf_map_node:
     imu1_differential: false
     imu1_relative: false
     imu1_remove_gravitational_acceleration: false
+
+    # ─ IMU 2 — magnetometer-derived absolute yaw ─
+    # mag_yaw_publisher.py publishes /imu/mag_yaw as a sensor_msgs/Imu whose
+    # orientation is a tilt-compensated heading from the LIS3MDL on the
+    # AltIMU-10v6, after applying hard/soft-iron calibration written by
+    # calibrate_imu_yaw_node and the local declination correction (Eichenau
+    # ≈ 3.5° E, NOAA WMM 2026). Yaw-only fusion (index 5); the publisher
+    # already flags angular_velocity_covariance[0]=-1 and
+    # linear_acceleration_covariance[0]=-1 so robot_localization ignores
+    # those channels regardless. Redundant with imu1 (cog_heading) but
+    # complementary: cog_heading needs forward motion + RTK-Fixed,
+    # mag_yaw works at standstill and under canopy / GPS multipath.
+    imu2: /imu/mag_yaw
+    imu2_config: [false, false, false,
+                  false, false, true,
+                  false, false, false,
+                  false, false, false,
+                  false, false, false]
+    imu2_queue_size: 2
+    imu2_differential: false
+    imu2_relative: false
+    imu2_remove_gravitational_acceleration: false
 
     # Process noise — same as ekf_odom
     process_noise_covariance:

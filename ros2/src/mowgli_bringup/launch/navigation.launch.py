@@ -407,11 +407,28 @@ def generate_launch_description() -> LaunchDescription:
         ],
     )
 
-    # Magnetometer pipeline removed in danyial fork — WT901's mag is
-    # hardware-bad (229° error uncalibrated), per-deploy calibration is
-    # high-effort, and the published /imu/mag_yaw was not fused into
-    # robot_localization (no imu2 source). cog_to_imu + dock_yaw_to_set_pose
-    # cover the absolute-yaw need.
+    # Magnetometer pipeline — restored 2026-04-29 with the AltIMU-10v6
+    # (LSM6DSO + LIS3MDL) replacing the unfusable WT901 mag. Reads
+    # /imu/mag_raw + /imu/data, applies the hard/soft-iron calibration
+    # written by calibrate_imu_yaw_node during the rotation phase, tilt-
+    # compensates via base_footprint→imu_link TF, and publishes
+    # /imu/mag_yaw — fused as imu2 by ekf_map_node (yaw-only, index 5).
+    # declination_deg=3.5 = NOAA WMM 2026 for Eichenau (48.159, 11.315);
+    # the upstream default of 1.5 is Paris and wrong for us. Override
+    # per-deploy via the ROS param if you operate elsewhere.
+    mag_yaw_publisher = Node(
+        package="mowgli_localization",
+        executable="mag_yaw_publisher.py",
+        name="mag_yaw_publisher",
+        output="screen",
+        parameters=[
+            {
+                "use_sim_time": use_sim_time,
+                "calibration_path": "/ros2_ws/maps/mag_calibration.yaml",
+                "declination_deg": 3.5,
+            }
+        ],
+    )
 
     # Inverse-variance fusion of /wheel_odom and K-ICP /encoder2/odom into
     # /wheel_odom_fused. ekf_odom_node subscribes to /wheel_odom_fused as
@@ -449,6 +466,7 @@ def generate_launch_description() -> LaunchDescription:
             ekf_map_node,
             dock_yaw_to_set_pose,
             cog_to_imu,
+            mag_yaw_publisher,
             wheel_kicp_blend,
             # Kinematic-ICP (LiDAR drift correction feeding ekf_odom via
             # /encoder2/odom — retained under the robot_localization

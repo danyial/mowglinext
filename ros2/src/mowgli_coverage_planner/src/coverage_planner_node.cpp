@@ -23,6 +23,7 @@
 #include <mowgli_interfaces/srv/get_all_areas.hpp>
 #include <mowgli_interfaces/srv/write_checkpoint.hpp>
 
+#include "mowgli_coverage_planner/checkpoint_io.hpp"
 #include "mowgli_coverage_planner/plan_context.hpp"
 
 // Plan 01-05 ships the skeleton wiring. The Checkpoint key=value serializer
@@ -322,21 +323,32 @@ void CoveragePlannerNode::execute(std::shared_ptr<GoalHandle> goal_handle)
 }
 
 // ---------------------------------------------------------------------------
-// on_write_checkpoint — body filled in checkpoint_io.cpp via Task 2 of
-// Plan 01-05. The implementation calls write_checkpoint_file() (which uses
-// mowgli_geometry::atomic_write internally). This stub will be replaced
-// by the real handler in Task 2 — until then it returns success=false so
-// the action plumbing is still self-consistent.
-// NOTE FOR TASK 2: replace this body with a call into checkpoint_io.cpp's
-// write_checkpoint_file() helper.
+// on_write_checkpoint — BT FollowCoveragePlan calls this after each
+// completed swath (Plan 01-01 RESEARCH §10 Q1 lock). The handler delegates
+// path construction + atomic write to checkpoint_io.cpp's
+// write_checkpoint_file(), which in turn calls
+// mowgli_geometry::atomic_write (Plan 01-02). T-05-01 / T-05-02 mitigations
+// live in write_checkpoint_file (digit-only filename interpolation +
+// non-finite value rejection).
 // ---------------------------------------------------------------------------
 
 void CoveragePlannerNode::on_write_checkpoint(
-    const mowgli_interfaces::srv::WriteCheckpoint::Request::SharedPtr /*req*/,
+    const mowgli_interfaces::srv::WriteCheckpoint::Request::SharedPtr req,
     mowgli_interfaces::srv::WriteCheckpoint::Response::SharedPtr res)
 {
-  res->success = false;
-  res->error_message = "WriteCheckpoint handler not yet wired (Plan 01-05 Task 2 lands this)";
+  std::string err;
+  if (!write_checkpoint_file(areas_dir_, req->checkpoint, &err))
+  {
+    res->success = false;
+    res->error_message = err;
+    RCLCPP_ERROR(get_logger(), "WriteCheckpoint failed: %s", err.c_str());
+    return;
+  }
+  res->success = true;
+  res->error_message.clear();
+  RCLCPP_INFO(get_logger(),
+              "WriteCheckpoint: persisted area_index=%u",
+              req->checkpoint.area_index);
 }
 
 }  // namespace mowgli_coverage_planner

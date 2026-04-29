@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: unknown
-stopped_at: "Completed 01-11: dispatch_checkpoint_write BT-side fix (CR-01 half 2, R-9/R-11 VERIFIED)"
-last_updated: "2026-04-29T10:18:35Z"
+stopped_at: Completed 02-01-PLAN.md (Wave 0 scaffolding for Phase 2 LiDAR docking)
+last_updated: "2026-04-29T20:53:25.194Z"
 progress:
-  total_phases: 1
+  total_phases: 2
   completed_phases: 1
-  total_plans: 11
-  completed_plans: 11
-  percent: 100
+  total_plans: 19
+  completed_plans: 12
+  percent: 63
 ---
 
 # Project state
@@ -41,9 +41,9 @@ progress:
 
 ## Last session
 
-- **Last session:** 2026-04-29T10:18:35Z
-- **Stopped at:** Completed 01-11: dispatch_checkpoint_write BT-side fix (CR-01 half 2, R-9/R-11 VERIFIED)
-- **Resume file:** None
+- **Last session:** 2026-04-29T20:53:25.185Z
+- **Stopped at:** Completed 02-01-PLAN.md (Wave 0 scaffolding for Phase 2 LiDAR docking)
+- **Resume file:** None — Wave 1 plans 02-02 + 02-03 ready; calibrate_imu_yaw_node yaml-format migration tracked as Plan 02-03 hand-off note
 - **Blockers:** SPEC AC-13 — operator must execute the Pi5 Eichenau garden smoke (procedure documented in 01-09-SUMMARY.md). Until then, Phase 1 remains in "automatable complete, hardware-verified pending" state.
 
 ## Performance Metrics
@@ -61,6 +61,7 @@ progress:
 | 01    | 09   | 25min    | 3 (T0+T1+T2; T3 pending) | 7 |
 | Phase 01 P10 | 6min | 2 tasks | 9 files |
 | 01    | 11   | 4min     | 4     | 4     |
+| Phase 02 P01 | 31min | 4 tasks | 14 files |
 
 ## Active branch
 

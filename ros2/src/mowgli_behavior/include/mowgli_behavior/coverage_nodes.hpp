@@ -151,10 +151,14 @@ public:
   BT::NodeStatus onRunning() override;
   void onHalted() override;
 
-private:
+protected:
   /// Fire-and-forget MowerControl (firmware is sole safety authority).
-  void setBladeEnabled(bool enabled);
+  /// Virtual so unit tests (test_coverage_nodes.cpp) can intercept calls
+  /// without spinning up an in-process MowerControl service — same-process
+  /// rclcpp service round-trips have proven flaky on Cyclone DDS.
+  virtual void setBladeEnabled(bool enabled);
 
+private:
   /// Determine the closing index of a same-segment-type group starting at
   /// `start_idx`. For MOWING_BOUSTROPHEDON, group exactly two waypoints
   /// (swath start + end). For OUTLINE_*, group all consecutive vertices

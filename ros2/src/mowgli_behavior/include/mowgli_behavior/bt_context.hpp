@@ -128,7 +128,15 @@ struct BTContext
   int resume_undock_failures{0};
 
   // -----------------------------------------------------------------------
-  // GPS snapshot for heading calibration during undock
+  // Odom-frame snapshot for heading calibration during undock.
+  //
+  // RecordUndockStart writes the odom→base_footprint translation here just
+  // before the BackUp behavior runs; CalibrateHeadingFromUndock diffs the
+  // current odom→base_footprint against this snapshot to derive the actual
+  // physical displacement (GPS-free). Raw GPS is intentionally avoided —
+  // RTK Fixed→Float drops near the dock cause metre-scale jumps that
+  // poisoned the previous GPS-based calculation (issue #73). Yaw is then
+  // converted to map frame via the current map→odom rotation.
   // -----------------------------------------------------------------------
   double undock_start_x{0.0};
   double undock_start_y{0.0};

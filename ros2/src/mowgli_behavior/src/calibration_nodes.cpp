@@ -16,8 +16,12 @@
 #include "mowgli_behavior/calibration_nodes.hpp"
 
 #include <cmath>
+#include <optional>
+#include <utility>
 
 #include "tf2/LinearMath/Quaternion.h"
+#include "tf2/utils.hpp"
+#include "tf2_ros/buffer.h"
 
 namespace mowgli_behavior
 {
@@ -69,6 +73,36 @@ void publish_odom_yaw_seed(
 
 }  // namespace
 
+namespace
+{
+
+// Look up odom→base_footprint translation. Returns nullopt and logs on
+// failure so callers can fall back. Uses TimePointZero for the latest
+// available transform (ekf_odom publishes at 25 Hz so the latest is
+// always fresh; specifying ctx->node->now() can race the publisher and
+// throw ExtrapolationException right after boot).
+std::optional<std::pair<double, double>> lookup_odom_xy(
+    const std::shared_ptr<BTContext>& ctx, const char* who)
+{
+  try
+  {
+    auto tf = ctx->tf_buffer->lookupTransform(
+        "odom", "base_footprint", tf2::TimePointZero,
+        tf2::durationFromSec(0.2));
+    return std::make_pair(tf.transform.translation.x,
+                          tf.transform.translation.y);
+  }
+  catch (const tf2::TransformException& ex)
+  {
+    RCLCPP_WARN(ctx->node->get_logger(),
+                "%s: TF lookup odom→base_footprint failed: %s",
+                who, ex.what());
+    return std::nullopt;
+  }
+}
+
+}  // namespace
+
 // ---------------------------------------------------------------------------
 // RecordUndockStart
 // ---------------------------------------------------------------------------
@@ -76,11 +110,28 @@ void publish_odom_yaw_seed(
 BT::NodeStatus RecordUndockStart::tick()
 {
   auto ctx = config().blackboard->get<std::shared_ptr<BTContext>>("context");
-  ctx->undock_start_x = ctx->gps_x;
-  ctx->undock_start_y = ctx->gps_y;
+
+  // Snapshot odom-frame position, NOT raw GPS. odom→base_footprint comes
+  // from ekf_odom which fuses wheels + gyro only — it cannot jump the way
+  // RTK Fixed→Float transitions at the dock can jump /gps/absolute_pose
+  // (issue #73). The odom-frame displacement is the true physical motion;
+  // we convert the resulting heading to map frame via map→odom rotation
+  // in CalibrateHeadingFromUndock below.
+  auto xy = lookup_odom_xy(ctx, "RecordUndockStart");
+  if (!xy)
+  {
+    // No TF yet — refuse to record so CalibrateHeadingFromUndock
+    // skips with "no undock_start recorded" and we fall back to the
+    // dock_yaw seed alone. Returning FAILURE would propagate through
+    // UndockSequence and force a retry that won't help (TF still not
+    // ready), so SUCCESS is the safer choice.
+    return BT::NodeStatus::SUCCESS;
+  }
+  ctx->undock_start_x = xy->first;
+  ctx->undock_start_y = xy->second;
   ctx->undock_start_recorded = true;
   RCLCPP_INFO(ctx->node->get_logger(),
-              "RecordUndockStart: pos=(%.3f, %.3f)",
+              "RecordUndockStart: odom_pos=(%.3f, %.3f)",
               ctx->undock_start_x,
               ctx->undock_start_y);
   return BT::NodeStatus::SUCCESS;
@@ -107,16 +158,26 @@ BT::NodeStatus CalibrateHeadingFromUndock::tick()
     return BT::NodeStatus::SUCCESS;
   }
 
-  // Minimum GPS displacement to refine yaw. At RTK-Fixed σ≈7 mm,
-  // σ_yaw = atan2(2σ_pos, displacement). 0.20 m → σ ≈ 4° — far tighter
-  // than the dock_yaw seed σ=10° floor, so even a partial undock with
-  // wheel slip on the ramp still gives us a useful yaw refinement based
-  // on the robot's actual motion rather than yesterday's calibration.
+  // Minimum displacement (in odom frame, GPS-free) to refine yaw. With
+  // wheel encoders + gyro the σ_pos over a 1.5 m straight-line BackUp is
+  // a few cm at most, so 0.20 m gives σ_yaw ≈ atan2(2·0.05, 0.20) ≈ 27° —
+  // dominant over our seed-floor σ=10° at the lower bound. Larger BackUps
+  // sharpen this naturally.
   double min_displacement = 0.20;
   getInput("min_displacement_m", min_displacement);
 
-  const double dx = ctx->gps_x - ctx->undock_start_x;
-  const double dy = ctx->gps_y - ctx->undock_start_y;
+  auto xy_now = lookup_odom_xy(ctx, "CalibrateHeadingFromUndock");
+  if (!xy_now)
+  {
+    ctx->undock_start_recorded = false;
+    RCLCPP_WARN(ctx->node->get_logger(),
+                "CalibrateHeadingFromUndock: TF unavailable — skipping "
+                "yaw refinement, keeping dock_yaw seed.");
+    ctx->yaw_seeded_this_session = true;
+    return BT::NodeStatus::SUCCESS;
+  }
+  const double dx = xy_now->first - ctx->undock_start_x;
+  const double dy = xy_now->second - ctx->undock_start_y;
   const double dist = std::hypot(dx, dy);
 
   if (dist < min_displacement)
@@ -125,16 +186,16 @@ BT::NodeStatus CalibrateHeadingFromUndock::tick()
     ctx->undock_start_recorded = false;
     if (still_on_dock)
     {
-      // BackUp reported complete but GPS barely moved AND the dock still
+      // BackUp reported complete but odom barely moved AND the dock still
       // charges — robot is genuinely stuck on the dock latch. Fail so
       // UndockSequence fails and the outer ReactiveSequence retries.
       RCLCPP_WARN(ctx->node->get_logger(),
-                  "CalibrateHeadingFromUndock: displacement %.3fm below min %.3fm "
+                  "CalibrateHeadingFromUndock: odom displacement %.3fm below min %.3fm "
                   "AND is_charging=true — robot stuck on dock, retrying undock.",
                   dist, min_displacement);
       return BT::NodeStatus::FAILURE;
     }
-    // Partial undock: GPS moved less than expected (wheel slip on the dock
+    // Partial undock: odom moved less than expected (wheel slip on the dock
     // ramp is common) but charging has dropped, so the robot IS off the
     // dock. The displacement is too short to refine yaw reliably — trust
     // the dock_yaw injected by dock_yaw_to_set_pose while still on the
@@ -148,8 +209,51 @@ BT::NodeStatus CalibrateHeadingFromUndock::tick()
   }
 
   // Robot moved backward during the BackUp. Motion vector (dx, dy) points
-  // OPPOSITE to the robot's heading, so heading = atan2(-dy, -dx).
-  const double yaw = std::atan2(-dy, -dx);
+  // OPPOSITE to the robot's heading, so heading_in_odom = atan2(-dy, -dx).
+  const double yaw_odom = std::atan2(-dy, -dx);
+
+  // Convert odom-frame yaw to map-frame yaw via the current map→odom
+  // rotation. Both EKFs were seeded to dock_yaw so this rotation is
+  // typically near zero, but a few seconds of GPS innovations during
+  // BackUp can rotate it by a degree or two — accounting for it keeps
+  // the seed honest. Falls back to identity if TF is briefly unavailable.
+  double map_to_odom_yaw = 0.0;
+  try
+  {
+    auto map_to_odom = ctx->tf_buffer->lookupTransform(
+        "map", "odom", tf2::TimePointZero, tf2::durationFromSec(0.2));
+    map_to_odom_yaw = tf2::getYaw(map_to_odom.transform.rotation);
+  }
+  catch (const tf2::TransformException& ex)
+  {
+    RCLCPP_WARN(ctx->node->get_logger(),
+                "CalibrateHeadingFromUndock: map→odom lookup failed (%s) — "
+                "assuming identity rotation for yaw seed.",
+                ex.what());
+  }
+  const double yaw_map = yaw_odom + map_to_odom_yaw;
+
+  // Position seed: prefer the EKF's current map→base_footprint estimate
+  // (TF) over raw GPS (which may have just jumped). If TF is unavailable
+  // for any reason, fall back to ctx->gps_x/y so we still publish a seed.
+  double seed_x = ctx->gps_x;
+  double seed_y = ctx->gps_y;
+  try
+  {
+    auto map_to_base = ctx->tf_buffer->lookupTransform(
+        "map", "base_footprint", tf2::TimePointZero,
+        tf2::durationFromSec(0.2));
+    seed_x = map_to_base.transform.translation.x;
+    seed_y = map_to_base.transform.translation.y;
+  }
+  catch (const tf2::TransformException& ex)
+  {
+    RCLCPP_WARN(ctx->node->get_logger(),
+                "CalibrateHeadingFromUndock: map→base_footprint lookup "
+                "failed (%s) — falling back to /gps/absolute_pose for "
+                "position seed.",
+                ex.what());
+  }
 
   if (!set_pose_pub_)
   {
@@ -163,22 +267,21 @@ BT::NodeStatus CalibrateHeadingFromUndock::tick()
   }
 
   tf2::Quaternion q;
-  q.setRPY(0.0, 0.0, yaw);
+  q.setRPY(0.0, 0.0, yaw_map);
 
   geometry_msgs::msg::PoseWithCovarianceStamped seed{};
   seed.header.stamp = ctx->node->now();
   seed.header.frame_id = "map";
-  seed.pose.pose.position.x = ctx->gps_x;
-  seed.pose.pose.position.y = ctx->gps_y;
+  seed.pose.pose.position.x = seed_x;
+  seed.pose.pose.position.y = seed_y;
   seed.pose.pose.orientation.x = q.x();
   seed.pose.pose.orientation.y = q.y();
   seed.pose.pose.orientation.z = q.z();
   seed.pose.pose.orientation.w = q.w();
-  // σ ≈ atan(2·σ_GPS / displacement). Compute from actual displacement
-  // so partial undocks (down to 0.20 m) get a representative variance
-  // rather than the over-tight 2 × 10⁻⁴ that assumed ≥ 0.5 m motion.
-  const double sigma_yaw = std::atan2(2.0 * 0.007, std::max(dist, 0.05));
-  const double yaw_var = std::max(sigma_yaw * sigma_yaw, 5e-4);  // floor σ≈1.3°
+  // σ ≈ atan(2·σ_pos / displacement). Use σ_pos = 5 cm for wheel+gyro
+  // dead-reckoning over 1–2 m. Floor σ ≈ 1.3° on long undocks.
+  const double sigma_yaw = std::atan2(2.0 * 0.05, std::max(dist, 0.05));
+  const double yaw_var = std::max(sigma_yaw * sigma_yaw, 5e-4);
   set_seed_covariance(seed, yaw_var);
   set_pose_pub_->publish(seed);
   publish_odom_yaw_seed(set_pose_odom_pub_, seed.header.stamp, q, yaw_var);
@@ -187,9 +290,13 @@ BT::NodeStatus CalibrateHeadingFromUndock::tick()
   ctx->yaw_seeded_this_session = true;
 
   RCLCPP_INFO(ctx->node->get_logger(),
-              "CalibrateHeadingFromUndock: dist=%.3fm yaw_seed=%.1f° "
-              "pos=(%.3f, %.3f) — set_pose published.",
-              dist, yaw * 180.0 / M_PI, ctx->gps_x, ctx->gps_y);
+              "CalibrateHeadingFromUndock: odom_dist=%.3fm yaw_odom=%.1f° "
+              "map→odom=%.1f° yaw_map=%.1f° pos=(%.3f, %.3f) — set_pose published.",
+              dist,
+              yaw_odom * 180.0 / M_PI,
+              map_to_odom_yaw * 180.0 / M_PI,
+              yaw_map * 180.0 / M_PI,
+              seed_x, seed_y);
   return BT::NodeStatus::SUCCESS;
 }
 

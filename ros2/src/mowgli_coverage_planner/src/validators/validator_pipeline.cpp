@@ -10,6 +10,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <fstream>
 #include <limits>
 #include <memory>
@@ -326,9 +327,15 @@ public:
       }
       if (!inside_any)
       {
+        char buf[256];
+        std::snprintf(
+            buf, sizeof(buf),
+            "waypoint[%zu] at (%.3f, %.3f) yaw=%.1f° segment_type=%u "
+            "footprint leaves all allowed areas",
+            i, wp.pose.pose.position.x, wp.pose.pose.position.y,
+            yaw * 180.0 / M_PI, static_cast<unsigned>(wp.segment_type));
         PlanError err = make_error(
-            PlanError::ERROR_FOOTPRINT_VIOLATION, 1,
-            "waypoint footprint leaves all allowed areas");
+            PlanError::ERROR_FOOTPRINT_VIOLATION, 1, buf);
         return err;
       }
     }
@@ -363,9 +370,19 @@ public:
           ctx.robot.footprint);
       if (!mowgli_geometry::footprint_disjoint_obstacles(fp, all_obstacles))
       {
+        // Include diagnostic position + index + segment_type so the operator
+        // can identify the offending waypoint without rebuilding with custom
+        // logging. Cheap on success (validator returns at first hit, so we
+        // pay the formatting cost only when we'd already fail anyway).
+        char buf[256];
+        std::snprintf(
+            buf, sizeof(buf),
+            "waypoint[%zu] at (%.3f, %.3f) yaw=%.1f° segment_type=%u "
+            "footprint intersects an obstacle",
+            i, wp.pose.pose.position.x, wp.pose.pose.position.y,
+            yaw * 180.0 / M_PI, static_cast<unsigned>(wp.segment_type));
         PlanError err = make_error(
-            PlanError::ERROR_FOOTPRINT_VIOLATION, 2,
-            "waypoint footprint intersects an obstacle");
+            PlanError::ERROR_FOOTPRINT_VIOLATION, 2, buf);
         return err;
       }
     }
@@ -501,8 +518,9 @@ public:
     for (const auto& area : ctx.areas)
       for (const auto& obs : area.obstacles) all_obstacles.push_back(obs);
 
-    for (const auto& wp : ctx.plan)
+    for (std::size_t i = 0; i < ctx.plan.size(); ++i)
     {
+      const auto& wp = ctx.plan[i];
       const bool is_dock_segment =
           wp.segment_type == CoverageWaypoint::SEGMENT_UNDOCK ||
           wp.segment_type == CoverageWaypoint::SEGMENT_DOCK_APPROACH ||
@@ -517,9 +535,15 @@ public:
       if (!all_obstacles.empty() &&
           !mowgli_geometry::footprint_disjoint_obstacles(fp, all_obstacles))
       {
+        char buf[256];
+        std::snprintf(
+            buf, sizeof(buf),
+            "dock-segment waypoint[%zu] at (%.3f, %.3f) yaw=%.1f° "
+            "segment_type=%u footprint intersects an obstacle",
+            i, wp.pose.pose.position.x, wp.pose.pose.position.y,
+            yaw * 180.0 / M_PI, static_cast<unsigned>(wp.segment_type));
         PlanError err = make_error(
-            PlanError::ERROR_FOOTPRINT_VIOLATION, 8,
-            "dock segment footprint intersects an obstacle");
+            PlanError::ERROR_FOOTPRINT_VIOLATION, 8, buf);
         return err;
       }
     }

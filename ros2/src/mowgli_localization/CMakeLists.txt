@@ -179,8 +179,10 @@ if(BUILD_TESTING)
     test/test_dock_scan_capture.py
     TIMEOUT 60
   )
-  # test_calibrate_imu_yaw_capture is registered by Plan 02-03 Task 2
-  # together with the calibrate_imu_yaw_node patch that creates it.
+  ament_add_pytest_test(test_calibrate_imu_yaw_capture
+    test/test_calibrate_imu_yaw_capture.py
+    TIMEOUT 60
+  )
 endif()
 
 # ---------------------------------------------------------------------------

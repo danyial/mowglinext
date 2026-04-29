@@ -126,6 +126,30 @@ if(BUILD_TESTING)
     tf2
     tf2_ros
   )
+
+  # ---- test_coverage_nodes (Plan 01-08 safety invariants) ----
+  ament_add_gtest(test_coverage_nodes
+    test/test_coverage_nodes.cpp
+    src/coverage_nodes.cpp
+  )
+
+  target_include_directories(test_coverage_nodes PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:include>
+  )
+
+  ament_target_dependencies(test_coverage_nodes
+    rclcpp
+    rclcpp_action
+    behaviortree_cpp
+    mowgli_interfaces
+    nav2_msgs
+    nav_msgs
+    geometry_msgs
+    action_msgs
+    tf2
+    tf2_ros
+  )
 endif()
 
 ament_package()

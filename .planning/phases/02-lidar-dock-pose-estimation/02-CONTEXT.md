@@ -73,7 +73,22 @@ Downstream agents MUST read `02-SPEC.md` before planning or implementing. Requir
 - **D-09:** Extend the **existing Dock-card** in the GUI dashboard (NOT a new card). Adds a LiDAR-confidence row + Recapture-button below the existing Charging indicator. Operator finds all dock-relevant info in one card.
 - **D-10:** Confidence visualization is **status-badge + numeric pair**: green badge (trusted), yellow (border zone, e.g. inlier 60-70% or rmse 5-10 cm), red (untrusted). Underneath: `Inlier 78% / RMSE 3.2 cm`. Operator gets at-a-glance go/no-go + drill-in numbers when needed.
 - **D-11:** "Recapture dock scan" button lives **in the Dock-card with a confirm-modal**. Click opens modal: "Capture wird den aktuellen LiDAR-Snapshot als neuen dock_scan.pcd speichern. Roboter sollte sicher auf dem Dock sitzen. Fortfahren?" Operator confirms. Prevents accidental re-captures from misclicks.
-- **D-12:** GUI subscribes to `/dock_match/pose` and `/dock_match/confidence` **directly via WebSocket through foxglove_bridge** (Phase 1 D-13 pattern). DockMatchConfidence.msg auto-generated TS bindings via `generate_ts_types.sh`. NO Go-backend relay — fastest path, no extra Go code.
+- **D-12:** GUI subscribes to `/dock_match/pose` and `/dock_match/confidence` via the **existing Go-relayed `topicMap` pattern** (`gui/pkg/providers/ros.go::topicMap`, ~2-line extension). DockMatchConfidence.msg auto-generated TS bindings via `generate_ts_types.sh`. **Reconciliation 2026-04-29 evening:** original wording "direct WebSocket via foxglove_bridge" was a Phase 1 D-13 carry-over but Phase 1's D-13 itself referenced rosbridge_server, which has been replaced in this fork by foxglove_bridge. There is no installed rosbridge in the deployed image and `@foxglove/ws-protocol` is not loaded in the browser. EVERY existing live-data hook (`useImuYaw`, `useMagYaw`, `useDockingSensor`, `useCoveragePlan`, etc.) routes through `topicMap` — Phase 2 follows the same pattern for consistency and zero new dependencies.
+
+- **D-17 (added 2026-04-29 evening from RESEARCH §Open Questions):** `dock_scan_meta.yaml` uses **flat key=value** format (same as `dock_approach.yaml` D-04 and `dock_calibration.yaml`). Schema:
+  ```
+  dock_scan_pcd_path: /ros2_ws/maps/dock_scan.pcd
+  dock_pose_x: <metres>
+  dock_pose_y: <metres>
+  dock_pose_yaw_rad: <radians>
+  sensor_extrinsic_x: <metres>
+  sensor_extrinsic_y: <metres>
+  sensor_extrinsic_yaw_rad: <radians>
+  point_count: <integer>
+  captured_at: <ISO-8601>
+  fix_type: <string, e.g. RTK_FIXED>
+  ```
+  Single shared C++ parser in `mowgli_geometry` (extension of existing key=value scanner) used by `dock_calibration_loader`, `dock_approach_loader`, `dock_scan_meta_loader`. Operator can read all three files with the same mental model.
 
 ### Test scope & Verification strategy
 

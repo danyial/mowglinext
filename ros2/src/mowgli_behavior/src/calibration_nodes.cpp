@@ -21,6 +21,11 @@
 
 #include "tf2/LinearMath/Quaternion.h"
 #include "tf2/utils.hpp"
+// Required for tf2::getYaw<geometry_msgs::Quaternion> — that template
+// instantiates tf2::fromMsg(Quaternion, tf2::Quaternion&), whose
+// definition lives in tf2_geometry_msgs. Without this include the link
+// fails with "undefined reference to tf2::fromMsg(...)".
+#include "tf2_geometry_msgs/tf2_geometry_msgs.hpp"
 #include "tf2_ros/buffer.h"
 
 namespace mowgli_behavior

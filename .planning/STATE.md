@@ -3,25 +3,25 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: unknown
-stopped_at: Completed 01-06
-last_updated: "2026-04-29T07:13:54.302Z"
+stopped_at: Completed 01-07
+last_updated: "2026-04-29T07:38:32Z"
 progress:
   total_phases: 1
   completed_phases: 0
   total_plans: 9
-  completed_plans: 6
-  percent: 67
+  completed_plans: 7
+  percent: 78
 ---
 
 # Project state
 
 ## Current phase
 
-1 — Coverage Planner Rewrite (Waves 1-3 complete — 6/9 plans done)
+1 — Coverage Planner Rewrite (Waves 1-4 partially complete — 7/9 plans done; 01-08 next)
 
 ## Current Plan
 
-06 — map_server cleanup (COMPLETE — committed `d5634dc0`, `73124c62`; SUMMARY at `.planning/phases/01-coverage-planner-rewrite/01-06-SUMMARY.md`)
+07 — coverage planner core (COMPLETE — committed `48447625`, `bc42d57f`, `cc818f3e`, `78ac2d66`; SUMMARY at `.planning/phases/01-coverage-planner-rewrite/01-07-SUMMARY.md`)
 
 ## Total Plans
 
@@ -29,19 +29,19 @@ progress:
 
 ## Resume point
 
-- **Last completed step:** Plan 01-06 (map_server cleanup) executed via `/gsd-execute-phase 1 --auto` (sequential mode). SUMMARY committed.
-- **Next step:** Wave 4 — 01-07 (planner core: fills the `PLAN-07-PLACEHOLDER` block in `coverage_planner_node.cpp` with validators + sweep + narrow strategies). 01-08 (BT integration) follows; it MUST land before Wave 5 because `mowgli_behavior` currently fails to build (see Plan 01-06 SUMMARY § "Known Build Breakage" for the exact files that need rewrite).
+- **Last completed step:** Plan 01-07 (coverage planner core) executed via `/gsd-execute-phase 1 --auto` (sequential mode). SUMMARY committed.
+- **Next step:** Wave 4 — 01-08 (BT integration — repairs mowgli_behavior by replacing the 5-class coverage_nodes scheme with PlanCoverageGoal + FollowCoveragePlan). 01-09 (E2E sim + Pi5 hardware smoke) follows.
 - **Auto-chain flag persisted:** yes (`workflow._auto_chain_active=true` in `.planning/config.json`)
 - **Wave 1 plans:** 01-01 ✅ COMPLETE, 01-03 ✅ COMPLETE
 - **Wave 2 plans:** 01-02 ✅ COMPLETE, 01-04 ✅ COMPLETE
 - **Wave 3 plans:** 01-05 ✅ COMPLETE, 01-06 ✅ COMPLETE
-- **Wave 4 plans:** 01-07 (planner core: validators + sweep + narrow strategies), 01-08 (BT integration — repairs mowgli_behavior)
+- **Wave 4 plans:** 01-07 ✅ COMPLETE, 01-08 (BT integration — repairs mowgli_behavior)
 - **Wave 5 plans:** 01-09 (E2E sim + Pi5 hardware smoke — operator-gated checkpoint)
 
 ## Last session
 
-- **Last session:** 2026-04-29T07:13:45.860Z
-- **Stopped at:** Completed 01-06
+- **Last session:** 2026-04-29T07:38:32Z
+- **Stopped at:** Completed 01-07
 - **Resume file:** None
 - **Blockers:** None
 
@@ -55,6 +55,7 @@ progress:
 | 01    | 04   | 15min    | 2     | 7     |
 | 01    | 05   | 8min     | 2     | 11    |
 | 01    | 06   | 25min    | 2     | 10    |
+| 01    | 07   | 20min    | 2     | 22    |
 
 ## Active branch
 
@@ -105,3 +106,9 @@ These were locked in chat on 2026-04-28 before `/gsd-spec-phase` started — the
 | 2026-04-29 | Plan 01-06: `MapServerNode::point_in_polygon` kept as a one-line forwarder during Task 1, deleted in Task 2 alongside the strip-planner code that called it | Bridge keeps Task 1 a self-contained, build-clean commit; Task 2 removes the wrapper + every legacy callsite together. Mirrors how Plan 01-02's `inline` exports replaced the static member without breaking external consumers. |
 | 2026-04-29 | Plan 01-06: areas.yaml `narrow_area_strategy` field is OPTIONAL on read for forward-compat with legacy on-disk files | Missing key -> default 0 (Skip), the safe behaviour those files implicitly already have. Out-of-range value (T-06-01) -> WARN + clamp to 0. Keeps the on-disk schema bump truly additive — no migration script required. |
 | 2026-04-29 | Plan 01-06: mowgli_behavior intentionally LEFT BROKEN until Plan 01-08 lands the BT rewrite | CONTEXT.md "single source of truth (Q1.1=a) over parallel-keep" — pull-path is deleted, not deprecated. Plan 01-06's verify scope is `--packages-select mowgli_interfaces mowgli_map mowgli_coverage_planner` (deliberately excluding mowgli_behavior). Until 01-08 lands, on-Pi5 deployments must NOT pick up this branch. |
+| 2026-04-29 | Plan 01-07: PLAN-07-PLACEHOLDER block in coverage_planner_node.cpp REPLACED with the full SPEC R-12 pipeline (pre-geometry validators -> PlanBuilder -> post-geometry validators -> result.metadata) | Marker is gone from every source file. execute() now end-to-end: empty-input/invalid-geometry -> structured PlanError; valid input -> sparse CoverageWaypoint[] plan. |
+| 2026-04-29 | Plan 01-07: Single-angle-per-plan policy locked (Iteration 1 simplification) | The FIRST working area's derived angle becomes ctx.mow_angle_used_deg for the whole plan; subsequent areas reuse it. Multi-angle support intentionally deferred to avoid abrupt mid-plan rotations and keep PlanBuilder logic in a single screen. Can be lifted in a future phase. |
+| 2026-04-29 | Plan 01-07: Resume snap — PlanBuilder rewrites the first MOWING_BOUSTROPHEDON pose to the persisted last_swath_endpoint | SPEC R-11's 5cm/5° tolerance holds by construction (delta = 0). Alternative (re-derive endpoint geometrically + assert tolerance) rejected because sweep math is sensitive to FP rounding and the persisted endpoint is the ground truth. |
+| 2026-04-29 | Plan 01-07: AC-3 plan-size ceiling raised 200 -> 400 (Rule 1 deviation) | SPEC AC-3 is mathematically inconsistent: 22.36 m / 0.13 m = 172 swaths × 2 endpoints = ~344 waypoints, exceeds the 200 ceiling regardless of implementation. Test now guards the sparse-plan invariant (>=50, <=400) which still catches dense pixel-densification regressions. |
+| 2026-04-29 | Plan 01-07: Validator order in pre-geometry pipeline is locked (InputSanity must come first) | InputSanityValidator catches out-of-range mow_angle_offset_deg before NoAreas mis-routes ERROR_INTERNAL to ERROR_NO_AREAS. Tests rely on this order. |
+| 2026-04-29 | Plan 01-07: OutlineGenerator detects flipped polygons via shoelace winding sign | offset_polygon_inward returns 4 points even when inset overshoots and produces an inverted polygon; sign-flip path treats the result as collapsed (warning for working-area, ERROR_OBSTACLE_OFFSET_FAILED for obstacles). Prevents emitting outline waypoints on a self-intersecting path. |

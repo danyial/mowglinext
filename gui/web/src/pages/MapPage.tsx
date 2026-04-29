@@ -32,6 +32,7 @@ import {MapToolbarMobile} from "./map/components/MapToolbarMobile.tsx";
 import {MapEditorToolbar} from "./map/components/MapEditorToolbar.tsx";
 import {JoystickOverlay} from "./map/components/JoystickOverlay.tsx";
 import {useIsMobile} from "../hooks/useIsMobile.ts";
+import {useCoveragePlan} from "../hooks/useCoveragePlan.ts";
 import {useThemeMode} from "../theme/ThemeContext.tsx";
 
 
@@ -43,28 +44,12 @@ export const MapPage: React.FC<{compact?: boolean}> = ({compact = false}) => {
 
     const {settings} = useSettings()
 
-    // Dynamic line-width for the plan-preview coverage swath. Two layers
-    // share this expression so a single edit keeps them in sync.
-    //
-    // Mapbox-GL natively renders 512-px tiles; the conventional slippy-map
-    // formula 156543.03 / 2^zoom assumes 256-px tiles, so for the same zoom
-    // value Mapbox-GL shows twice the resolution. The empirically-calibrated
-    // px/m table below is for lat 48° (Eichenau): 1.1 px/m at zoom 16 up to
-    // 320 px/m at zoom 24. We multiply the table by tool_width in JS rather
-    // than wrapping the interpolate expression in a Mapbox `*` operator —
-    // ["zoom"] / ["interpolate", ["zoom"], …] expressions must sit at the
-    // top level of the property and silently produce zero when nested.
-    const coverageLineWidth = useMemo(() => {
-        const toolWidthM = parseFloat(String(settings?.tool_width ?? 0.18)) || 0.18;
-        return [
-            "interpolate", ["exponential", 2], ["zoom"],
-            16, 1.1 * toolWidthM,
-            18, 5 * toolWidthM,
-            20, 20 * toolWidthM,
-            22, 80 * toolWidthM,
-            24, 320 * toolWidthM,
-        ] as any;
-    }, [settings?.tool_width]);
+    // Note: the legacy plan-preview coverage-swath line-width memo
+    // (zoom-interpolated translucent orange band scaled by tool_width) was
+    // removed with the plan-preview-* layers in Plan 01-04. The new
+    // coverage-plan-line layer uses a fixed 2.5 px width per UI-SPEC §"Mapbox
+    // Layer Color Contract". Re-introduce a tool_width-tracking band as a
+    // separate non-segment_type-coloured layer if desired in a future plan.
 
     const [labelsCollection, setLabelsCollection] = useState<FeatureCollection>({
         type: "FeatureCollection",
@@ -136,114 +121,40 @@ export const MapPage: React.FC<{compact?: boolean}> = ({compact = false}) => {
 
     const [mowingAreas, setMowingAreas] = useState<{ key: string, label: string, feat: Feature }[]>([])
 
-    // Plan-preview overlay state (#53 phase A). Toggled from MapToolbar; the
-    // GeoJSON is fetched on demand so the overlay isn't repainted while the
-    // robot is actively mowing — this is a static "what will happen" view,
-    // not a live tracker. The fetch hits /api/mowglinext/preview-plan/<idx>
-    // for the currently selected mowing area.
-    const [showPlanPreview, setShowPlanPreview] = useState<boolean>(false);
-    const [planPreview, setPlanPreview] = useState<FeatureCollection | null>(null);
-
-    const fetchPlanPreview = useCallback(async () => {
-        // Pick the first mowing area's index (mowingAreas comes from
-        // map_server_node and is already sorted). We could later expose a
-        // dropdown for multi-area gardens.
-        const first = mowingAreas[0];
-        const areaIndex = (first?.feat?.properties?.index ?? 0) as number;
-        try {
-            const resp = await fetch(`/api/mowglinext/preview-plan/${areaIndex}`);
-            if (!resp.ok) {
-                throw new Error(`preview-plan HTTP ${resp.status}`);
-            }
-            const data = await resp.json();
-            const poses: { pose: { position: { x: number; y: number } } }[] =
-                data.strip_plan?.poses ?? [];
-            const segmentStarts: number[] = data.segment_starts ?? [];
-
-            // Split poses into one LineString per strip using segment_starts,
-            // and synthesise straight-line transit segments between consecutive
-            // strips so the operator can see the full path the robot will take.
-            // The actual transit during mowing goes through Smac/Nav2 and may
-            // route around obstacles; the straight line is a reasonable
-            // approximation for verification on obstacle-free polygons.
-            const features: Feature[] = [];
-            const stripEnds: { index: number; coord: Position }[] = [];
-            const stripStarts: { index: number; coord: Position }[] = [];
-
-            for (let i = 0; i < segmentStarts.length; i++) {
-                const start = segmentStarts[i];
-                const end = i + 1 < segmentStarts.length ? segmentStarts[i + 1] : poses.length;
-                if (end - start < 2) continue;
-                const coords: Position[] = [];
-                for (let j = start; j < end; j++) {
-                    const p = poses[j].pose.position;
-                    const ll = transpose(offsetX, offsetY, datum, p.y, p.x) as [number, number];
-                    coords.push(ll);
-                }
-                features.push({
-                    type: "Feature",
-                    properties: { strip_index: i, kind: "strip" },
-                    geometry: { type: "LineString", coordinates: coords },
-                });
-                stripStarts.push({ index: i, coord: coords[0] });
-                stripEnds.push({ index: i, coord: coords[coords.length - 1] });
-            }
-
-            // Transit segments: connect strip[i].end → strip[i+1].start with
-            // a straight line. The boustrophedon order (strip 0 → 1 → 2 → …)
-            // is implicit in segment_starts ordering; planner returns strips
-            // in execution order.
-            for (let i = 0; i + 1 < stripEnds.length; i++) {
-                const from = stripEnds[i].coord;
-                const to = stripStarts[i + 1].coord;
-                features.push({
-                    type: "Feature",
-                    properties: { kind: "transit", from_strip: i, to_strip: i + 1 },
-                    geometry: { type: "LineString", coordinates: [from, to] },
-                });
-            }
-
-            // Outline pass — closed loop along the polygon edge that the BT
-            // OutlineArea node will drive BEFORE the strip plan starts. Same
-            // PreviewPlan response carries it.
-            const outlinePoses: { pose: { position: { x: number; y: number } } }[] =
-                data.outline_path?.poses ?? [];
-            if (outlinePoses.length >= 2) {
-                const coords: Position[] = outlinePoses.map((p) => {
-                    const pos = p.pose.position;
-                    return transpose(offsetX, offsetY, datum, pos.y, pos.x) as [number, number];
-                });
-                features.push({
-                    type: "Feature",
-                    properties: { kind: "outline" },
-                    geometry: { type: "LineString", coordinates: coords },
-                });
-            }
-
-            setPlanPreview({ type: "FeatureCollection", features });
-            console.info(
-                `Plan preview: ${data.num_strips} strips, ` +
-                `polygon ${data.polygon_diag_m?.toFixed(2)} m diag, ` +
-                `inset ${data.effective_inset_m?.toFixed(2)} m, ` +
-                `angle ${data.mow_angle_deg?.toFixed(1)}°`
-            );
-        } catch (err) {
-            console.error("Plan preview fetch failed:", err);
-            notification.error({
-                message: "Plan preview failed",
-                description: (err as Error).message,
-            });
-            setShowPlanPreview(false);
-        }
-    }, [mowingAreas, offsetX, offsetY, datum, notification]);
-
-    useEffect(() => {
+    // Coverage-plan overlay state (Plan 01-04). Replaces the legacy
+    // /api/mowglinext/preview-plan HTTP path with a rosbridge action call to
+    // /coverage_planner_node/plan_coverage. The hook owns the FeatureCollection,
+    // loading state, error notifications, and rosbridge connection lifecycle.
+    // See gui/web/src/hooks/useCoveragePlan.ts.
+    const projection = useMemo(() => ({offsetX, offsetY, datum}), [offsetX, offsetY, datum]);
+    const {
+        planGeoJson: coveragePlanGeoJson,
+        isLoading: planLoading,
+        requestPlan: requestCoveragePlan,
+        clearPlan: clearCoveragePlan,
+    } = useCoveragePlan(projection);
+    const showPlanPreview = coveragePlanGeoJson !== null;
+    const onTogglePlanPreview = useCallback(async () => {
         if (showPlanPreview) {
-            fetchPlanPreview();
-        } else {
-            setPlanPreview(null);
+            clearCoveragePlan();
+            return;
         }
-    }, [showPlanPreview, fetchPlanPreview]);
+        const dockFeat = features["dock"];
+        const dockCoords = dockFeat instanceof DockFeatureBase ? dockFeat.getCoordinates() : null;
+        const dockHeading = dockFeat instanceof DockFeatureBase ? dockFeat.getHeading() : 0;
+        const datumIsValid = datum[0] !== 0 || datum[1] !== 0;
+        const dockRos = dockCoords && datumIsValid
+            ? itranspose(offsetX, offsetY, datum, dockCoords[1], dockCoords[0])
+            : [0, 0];
+        const halfYaw = dockHeading / 2;
+        const dockPose = {
+            pose: {
+                position: {x: dockRos[1], y: dockRos[0], z: 0},
+                orientation: {x: 0, y: 0, z: Math.sin(halfYaw), w: Math.cos(halfYaw)},
+            },
+        };
+        await requestCoveragePlan({dockPose});
+    }, [showPlanPreview, clearCoveragePlan, requestCoveragePlan, features, offsetX, offsetY, datum]);
 
     const {map, setMap, path, plan, lidarCollection, coverageCellsImage, highLevelStatus, joyStream} = useMapStreams({
         editMap,
@@ -677,80 +588,62 @@ export const MapPage: React.FC<{compact?: boolean}> = ({compact = false}) => {
                             }}/>
                         </Source>
                     )}
-                    {planPreview && (
-                        <Source type={"geojson"} id={"plan-preview"} data={planPreview}>
-                            {/* Blade-coverage swath — translucent orange band whose width
-                                exactly tracks the live tool_width on the ground. See
-                                coverageLineWidth memo near the top of the component for
-                                the px/m table + tool_width multiplier. */}
-                            <Layer type={"line"} id={"plan-preview-coverage"}
-                                filter={['any',
-                                    ['==', ['get', 'kind'], 'strip'],
-                                    ['==', ['get', 'kind'], 'outline'],
-                                ]}
+                    {coveragePlanGeoJson && (
+                        <Source type={"geojson"} id={"coverage-plan-source"} data={coveragePlanGeoJson}>
+                            {/* Per D-11 / UI-SPEC §"Mapbox Layer Color Contract":
+                                segment_type-driven colour via Mapbox match expression. */}
+                            <Layer type={"line"} id={"coverage-plan-line"}
+                                filter={['==', ['geometry-type'], 'LineString']}
                                 layout={{
                                     "line-cap": "round",
                                     "line-join": "round",
                                 }}
                                 paint={{
-                                    "line-color": "#f97316",
-                                    "line-opacity": 0.35,
-                                    "line-width": coverageLineWidth,
-                                }}/>
-                            {/* Outline pass — drawn first so strips/transits render on top */}
-                            <Layer type={"line"} id={"plan-preview-outline"}
-                                filter={['==', ['get', 'kind'], 'outline']}
-                                paint={{
-                                    "line-color": "#16a34a",
-                                    "line-width": 3,
-                                    "line-opacity": 0.85,
-                                }}/>
-                            {/* Direction arrows along the outline pass */}
-                            <Layer type={"symbol"} id={"plan-preview-outline-arrows"}
-                                filter={['==', ['get', 'kind'], 'outline']}
-                                layout={{
-                                    "symbol-placement": "line",
-                                    "symbol-spacing": 50,
-                                    "text-field": "▶",
-                                    "text-size": 13,
-                                    "text-keep-upright": false,
-                                }}
-                                paint={{
-                                    "text-color": "#15803d",
-                                    "text-halo-color": "#ffffff",
-                                    "text-halo-width": 1.2,
-                                }}/>
-                            {/* Transit segments — orange dashed */}
-                            <Layer type={"line"} id={"plan-preview-transits"}
-                                filter={['==', ['get', 'kind'], 'transit']}
-                                paint={{
-                                    "line-color": "#f59e0b",
-                                    "line-width": 1.5,
-                                    "line-opacity": 0.7,
-                                    "line-dasharray": [2, 3],
-                                }}/>
-                            {/* Strips — solid blue */}
-                            <Layer type={"line"} id={"plan-preview-strips"}
-                                filter={['==', ['get', 'kind'], 'strip']}
-                                paint={{
-                                    "line-color": "#1d4ed8",
+                                    "line-color": ["match", ["get", "segment_type"],
+                                        "MOWING_BOUSTROPHEDON", "#1d4ed8",
+                                        "OUTLINE_WORKING_AREA",  "#16a34a",
+                                        "OUTLINE_OBSTACLE",      "#15803d",
+                                        "TRANSIT",               "#9ca3af",
+                                        "UNDOCK",                "#f97316",
+                                        "DOCK_APPROACH",         "#fbbf24",
+                                        "DOCKING",               "#b45309",
+                                        "RETURN_TO_DOCK",        "#facc15",
+                                        "#9ca3af"
+                                    ],
                                     "line-width": 2.5,
                                     "line-opacity": 0.9,
                                 }}/>
-                            {/* Direction arrows along strips */}
-                            <Layer type={"symbol"} id={"plan-preview-arrows"}
-                                filter={['==', ['get', 'kind'], 'strip']}
+                            <Layer type={"symbol"} id={"coverage-plan-arrows"}
+                                filter={['==', ['geometry-type'], 'LineString']}
                                 layout={{
                                     "symbol-placement": "line",
-                                    "symbol-spacing": 30,
+                                    "symbol-spacing": 40,
                                     "text-field": "▶",
-                                    "text-size": 14,
+                                    "text-size": 12,
                                     "text-keep-upright": false,
                                 }}
                                 paint={{
-                                    "text-color": "#1e40af",
-                                    "text-halo-color": "#ffffff",
+                                    "text-color": ["match", ["get", "segment_type"],
+                                        "MOWING_BOUSTROPHEDON", "#1d4ed8",
+                                        "OUTLINE_WORKING_AREA",  "#16a34a",
+                                        "OUTLINE_OBSTACLE",      "#15803d",
+                                        "TRANSIT",               "#9ca3af",
+                                        "UNDOCK",                "#f97316",
+                                        "DOCK_APPROACH",         "#fbbf24",
+                                        "DOCKING",               "#b45309",
+                                        "RETURN_TO_DOCK",        "#facc15",
+                                        "#9ca3af"
+                                    ],
+                                    "text-halo-color": "#FFFFFF",
                                     "text-halo-width": 1.2,
+                                }}/>
+                            <Layer type={"circle"} id={"coverage-plan-points"}
+                                filter={['all', ['==', ['geometry-type'], 'Point'], ['==', ['get', 'point_type'], 'endpoint']]}
+                                paint={{
+                                    "circle-radius": 4,
+                                    "circle-color": "#f97316",
+                                    "circle-stroke-color": "#FFFFFF",
+                                    "circle-stroke-width": 1.5,
                                 }}/>
                         </Source>
                     )}
@@ -908,80 +801,62 @@ export const MapPage: React.FC<{compact?: boolean}> = ({compact = false}) => {
                             }}/>
                         </Source>
                     )}
-                    {planPreview && (
-                        <Source type={"geojson"} id={"plan-preview"} data={planPreview}>
-                            {/* Blade-coverage swath — translucent orange band whose width
-                                exactly tracks the live tool_width on the ground. See
-                                coverageLineWidth memo near the top of the component for
-                                the px/m table + tool_width multiplier. */}
-                            <Layer type={"line"} id={"plan-preview-coverage"}
-                                filter={['any',
-                                    ['==', ['get', 'kind'], 'strip'],
-                                    ['==', ['get', 'kind'], 'outline'],
-                                ]}
+                    {coveragePlanGeoJson && (
+                        <Source type={"geojson"} id={"coverage-plan-source"} data={coveragePlanGeoJson}>
+                            {/* Per D-11 / UI-SPEC §"Mapbox Layer Color Contract":
+                                segment_type-driven colour via Mapbox match expression. */}
+                            <Layer type={"line"} id={"coverage-plan-line"}
+                                filter={['==', ['geometry-type'], 'LineString']}
                                 layout={{
                                     "line-cap": "round",
                                     "line-join": "round",
                                 }}
                                 paint={{
-                                    "line-color": "#f97316",
-                                    "line-opacity": 0.35,
-                                    "line-width": coverageLineWidth,
-                                }}/>
-                            {/* Outline pass — drawn first so strips/transits render on top */}
-                            <Layer type={"line"} id={"plan-preview-outline"}
-                                filter={['==', ['get', 'kind'], 'outline']}
-                                paint={{
-                                    "line-color": "#16a34a",
-                                    "line-width": 3,
-                                    "line-opacity": 0.85,
-                                }}/>
-                            {/* Direction arrows along the outline pass */}
-                            <Layer type={"symbol"} id={"plan-preview-outline-arrows"}
-                                filter={['==', ['get', 'kind'], 'outline']}
-                                layout={{
-                                    "symbol-placement": "line",
-                                    "symbol-spacing": 50,
-                                    "text-field": "▶",
-                                    "text-size": 13,
-                                    "text-keep-upright": false,
-                                }}
-                                paint={{
-                                    "text-color": "#15803d",
-                                    "text-halo-color": "#ffffff",
-                                    "text-halo-width": 1.2,
-                                }}/>
-                            {/* Transit segments — orange dashed */}
-                            <Layer type={"line"} id={"plan-preview-transits"}
-                                filter={['==', ['get', 'kind'], 'transit']}
-                                paint={{
-                                    "line-color": "#f59e0b",
-                                    "line-width": 1.5,
-                                    "line-opacity": 0.7,
-                                    "line-dasharray": [2, 3],
-                                }}/>
-                            {/* Strips — solid blue */}
-                            <Layer type={"line"} id={"plan-preview-strips"}
-                                filter={['==', ['get', 'kind'], 'strip']}
-                                paint={{
-                                    "line-color": "#1d4ed8",
+                                    "line-color": ["match", ["get", "segment_type"],
+                                        "MOWING_BOUSTROPHEDON", "#1d4ed8",
+                                        "OUTLINE_WORKING_AREA",  "#16a34a",
+                                        "OUTLINE_OBSTACLE",      "#15803d",
+                                        "TRANSIT",               "#9ca3af",
+                                        "UNDOCK",                "#f97316",
+                                        "DOCK_APPROACH",         "#fbbf24",
+                                        "DOCKING",               "#b45309",
+                                        "RETURN_TO_DOCK",        "#facc15",
+                                        "#9ca3af"
+                                    ],
                                     "line-width": 2.5,
                                     "line-opacity": 0.9,
                                 }}/>
-                            {/* Direction arrows along strips */}
-                            <Layer type={"symbol"} id={"plan-preview-arrows"}
-                                filter={['==', ['get', 'kind'], 'strip']}
+                            <Layer type={"symbol"} id={"coverage-plan-arrows"}
+                                filter={['==', ['geometry-type'], 'LineString']}
                                 layout={{
                                     "symbol-placement": "line",
-                                    "symbol-spacing": 30,
+                                    "symbol-spacing": 40,
                                     "text-field": "▶",
-                                    "text-size": 14,
+                                    "text-size": 12,
                                     "text-keep-upright": false,
                                 }}
                                 paint={{
-                                    "text-color": "#1e40af",
-                                    "text-halo-color": "#ffffff",
+                                    "text-color": ["match", ["get", "segment_type"],
+                                        "MOWING_BOUSTROPHEDON", "#1d4ed8",
+                                        "OUTLINE_WORKING_AREA",  "#16a34a",
+                                        "OUTLINE_OBSTACLE",      "#15803d",
+                                        "TRANSIT",               "#9ca3af",
+                                        "UNDOCK",                "#f97316",
+                                        "DOCK_APPROACH",         "#fbbf24",
+                                        "DOCKING",               "#b45309",
+                                        "RETURN_TO_DOCK",        "#facc15",
+                                        "#9ca3af"
+                                    ],
+                                    "text-halo-color": "#FFFFFF",
                                     "text-halo-width": 1.2,
+                                }}/>
+                            <Layer type={"circle"} id={"coverage-plan-points"}
+                                filter={['all', ['==', ['geometry-type'], 'Point'], ['==', ['get', 'point_type'], 'endpoint']]}
+                                paint={{
+                                    "circle-radius": 4,
+                                    "circle-color": "#f97316",
+                                    "circle-stroke-color": "#FFFFFF",
+                                    "circle-stroke-width": 1.5,
                                 }}/>
                         </Source>
                     )}
@@ -1047,6 +922,9 @@ export const MapPage: React.FC<{compact?: boolean}> = ({compact = false}) => {
                         }}
                         stateName={highLevelStatus.highLevelStatus.state_name}
                         emergency={highLevelStatus.highLevelStatus.emergency}
+                        showPlanPreview={showPlanPreview}
+                        planLoading={planLoading}
+                        onTogglePlanPreview={onTogglePlanPreview}
                         {...mowerActions}
                     />
                 )}
@@ -1086,9 +964,10 @@ export const MapPage: React.FC<{compact?: boolean}> = ({compact = false}) => {
                             stateName={highLevelStatus.highLevelStatus.state_name}
                             emergency={highLevelStatus.highLevelStatus.emergency}
                             showPlanPreview={showPlanPreview}
+                            planLoading={planLoading}
                             onEditMap={handleEditMap}
                             onToggleSatellite={() => setUseSatellite(!useSatellite)}
-                            onTogglePlanPreview={() => setShowPlanPreview(p => !p)}
+                            onTogglePlanPreview={onTogglePlanPreview}
                             onManualMode={handleManualMode}
                             onStopManualMode={handleStopManualMode}
                             onBackupMap={handleBackupMap}

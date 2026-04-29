@@ -33,6 +33,8 @@ import {
     CaretRightOutlined,
     ThunderboltOutlined,
     CheckOutlined,
+    EyeOutlined,
+    EyeInvisibleOutlined,
 } from "@ant-design/icons";
 import type {MenuInfo} from "rc-menu/lib/interface";
 import AsyncButton from "../../../components/AsyncButton.tsx";
@@ -91,6 +93,13 @@ interface MapToolbarMobileProps {
     onBladeOff?: () => Promise<void>;
     onRecordFinish?: () => Promise<void>;
     onRecordCancel?: () => Promise<void>;
+    showPlanPreview?: boolean;
+    /**
+     * Optional reflector for the upstream PlanCoverage.action loading state.
+     * Mirror of the desktop MapToolbar's planLoading prop.
+     */
+    planLoading?: boolean;
+    onTogglePlanPreview?: () => Promise<void> | void;
 }
 
 export const MapToolbarMobile = ({
@@ -107,6 +116,7 @@ export const MapToolbarMobile = ({
     onAreaRecording, onMowNextArea, onContinueOrPause,
     onBladeForward, onBladeBackward, onBladeOff,
     onRecordFinish, onRecordCancel,
+    showPlanPreview, planLoading, onTogglePlanPreview,
 }: MapToolbarMobileProps) => {
     const {colors} = useThemeMode();
     const {notification} = App.useApp();
@@ -364,6 +374,23 @@ export const MapToolbarMobile = ({
                 onClick={onEditMap}
                 aria-label="Edit Map"
             />
+
+            {/* Preview Plan — mobile mirror of the desktop button per UI-SPEC. */}
+            {onTogglePlanPreview && (
+                <AsyncButton
+                    icon={showPlanPreview ? <EyeInvisibleOutlined /> : <EyeOutlined />}
+                    loading={planLoading}
+                    title={
+                        showPlanPreview
+                            ? "Clear plan preview"
+                            : "Generate and preview the full mowing plan for all areas"
+                    }
+                    aria-label={showPlanPreview ? "Clear Preview" : "Preview Plan"}
+                    onAsyncClick={async () => {
+                        await onTogglePlanPreview();
+                    }}
+                />
+            )}
 
             <Dropdown
                 menu={{items: mowingAreas, onClick: handleMowClick}}

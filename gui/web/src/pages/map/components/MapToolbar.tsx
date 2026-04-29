@@ -21,6 +21,7 @@ import {
     CheckOutlined,
     CloseOutlined,
     EyeOutlined,
+    EyeInvisibleOutlined,
 } from "@ant-design/icons";
 import type {MenuInfo} from "rc-menu/lib/interface";
 import AsyncButton from "../../../components/AsyncButton.tsx";
@@ -38,9 +39,16 @@ interface MapToolbarProps {
     stateName?: string;
     emergency?: boolean;
     showPlanPreview?: boolean;
+    /**
+     * Optional reflector for the upstream PlanCoverage.action loading state.
+     * The Preview Plan AsyncButton already drives its own spinner, so this
+     * prop is informational; if set, the button is forced into the loading
+     * state for the duration of an in-flight rosbridge round-trip.
+     */
+    planLoading?: boolean;
     onEditMap: () => void;
     onToggleSatellite: () => void;
-    onTogglePlanPreview?: () => void;
+    onTogglePlanPreview?: () => Promise<void> | void;
     onManualMode: () => Promise<void>;
     onStopManualMode: () => Promise<void>;
     onBackupMap: () => void;
@@ -63,7 +71,7 @@ interface MapToolbarProps {
 
 export const MapToolbar = ({
     manualMode, useSatellite, mowingAreas, stateName, emergency,
-    showPlanPreview,
+    showPlanPreview, planLoading,
     onEditMap, onToggleSatellite, onTogglePlanPreview,
     onManualMode, onStopManualMode,
     onBackupMap, onRestoreMap, onDownloadGeoJSON,
@@ -89,7 +97,6 @@ export const MapToolbar = ({
 
     const moreMenuItems: MenuProps["items"] = [
         {key: "satellite", icon: <GlobalOutlined />, label: useSatellite ? "Dark map" : "Satellite"},
-        {key: "planPreview", icon: <EyeOutlined />, label: showPlanPreview ? "Hide plan preview" : "Show plan preview"},
         {type: "divider"},
         {key: "areaRecording", icon: <AimOutlined />, label: "Area Recording"},
         {key: "mowNext", icon: <ForwardOutlined />, label: "Mow Next Area"},
@@ -113,7 +120,6 @@ export const MapToolbar = ({
     const handleMoreClick: MenuProps["onClick"] = ({key}: MenuInfo) => {
         switch (key) {
             case "satellite": onToggleSatellite(); break;
-            case "planPreview": onTogglePlanPreview?.(); break;
             case "manual": safeCall(() => onManualMode()); break;
             case "stopManual": safeCall(() => onStopManualMode()); break;
             case "areaRecording": safeCall(onAreaRecording); break;
@@ -137,6 +143,33 @@ export const MapToolbar = ({
             >
                 Edit Map
             </Button>
+
+            {/* Preview Plan — invokes PlanCoverage.action via rosbridge.
+                Idle: "Preview Plan"   (EyeOutlined)
+                Active: "Clear Preview" (EyeInvisibleOutlined, type=default)
+                AsyncButton's loading prop drives the spinner during the
+                in-flight rosbridge round-trip; planLoading mirrors the same
+                state from the parent useCoveragePlan hook. */}
+            {onTogglePlanPreview && (
+                <AsyncButton
+                    icon={showPlanPreview ? <EyeInvisibleOutlined /> : <EyeOutlined />}
+                    loading={planLoading}
+                    title={
+                        showPlanPreview
+                            ? "Clear plan preview"
+                            : "Generate and preview the full mowing plan for all areas"
+                    }
+                    onAsyncClick={async () => {
+                        await onTogglePlanPreview();
+                    }}
+                >
+                    {planLoading
+                        ? "Planning…"
+                        : showPlanPreview
+                            ? "Clear Preview"
+                            : "Preview Plan"}
+                </AsyncButton>
+            )}
 
             {isRecording ? (
                 <>

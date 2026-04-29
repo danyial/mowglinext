@@ -38,7 +38,11 @@ import time
 import rclpy
 import yaml
 from geometry_msgs.msg import PoseWithCovarianceStamped, Quaternion
-from mowgli_interfaces.msg import AbsolutePose, Status as HwStatus
+from mowgli_interfaces.msg import (
+    AbsolutePose,
+    HighLevelStatus,
+    Status as HwStatus,
+)
 from rclpy.node import Node
 from rclpy.qos import (
     DurabilityPolicy,
@@ -49,6 +53,16 @@ from rclpy.qos import (
 from sensor_msgs.msg import Imu
 
 DOCK_CALIBRATION_PATH = "/ros2_ws/maps/dock_calibration.yaml"
+
+# HighLevelStatus.HIGH_LEVEL_STATE_AUTONOMOUS — duplicated as a module
+# constant so the gate check stays cheap (no msg attribute lookup per
+# status message). Kept in sync with HighLevelStatus.msg in
+# mowgli_interfaces. Other moving states that must also block seeding:
+#   HIGH_LEVEL_STATE_RECORDING = 3
+#   HIGH_LEVEL_STATE_MANUAL_MOWING = 4
+# Allowed to seed: NULL (0), IDLE (1), and the bootstrap "unknown" state
+# (None) before the BT has published its first status.
+_BLOCK_SEED_STATES = {2, 3, 4}
 
 
 class DockYawToSetPose(Node):
@@ -78,6 +92,18 @@ class DockYawToSetPose(Node):
         self._sub_gps = self.create_subscription(
             AbsolutePose, "/gps/absolute_pose", self._on_gps, qos_sensor
         )
+        # Track BT high-level state so we can suppress seeding during
+        # AUTONOMOUS / RECORDING / MANUAL_MOWING. Without this gate a
+        # transient charging signal mid-mow (e.g. robot bumps the dock
+        # latch during a failed undock) re-seeds the EKF and traps the
+        # robot in an undock/redock loop (issue #73). The BT publishes on
+        # ~/high_level_status which resolves to this absolute name.
+        self._sub_high_level = self.create_subscription(
+            HighLevelStatus,
+            "/mowgli_behavior_node/high_level_status",
+            self._on_high_level_status,
+            qos_reliable,
+        )
         self._pub_map = self.create_publisher(
             PoseWithCovarianceStamped, "/ekf_map_node/set_pose", qos_reliable
         )
@@ -99,6 +125,20 @@ class DockYawToSetPose(Node):
         self._need_to_publish = False
         self._last_publish_time = 0.0   # seconds, monotonic
         self._min_publish_period = 1.0  # 1 Hz throttle while charging
+        # BT high-level state cache (None until first message). When equal
+        # to a value in _BLOCK_SEED_STATES, _try_publish silently no-ops.
+        self._high_level_state: int | None = None
+        # Rising-edge debounce: a charge-pin flicker after a failed undock
+        # would otherwise re-fire the seed every cycle and snap the EKF
+        # back to the dock pose, locking the robot into an undock/redock
+        # loop (issue #73). 30 s is long enough to cover the worst-case
+        # BackUp + collision-monitor settle, short enough that a real
+        # post-mow autodock still seeds without operator intervention.
+        # The boot-time first-fire is exempt (handled in _on_status).
+        self._rising_edge_debounce_sec = self.declare_parameter(
+            "rising_edge_debounce_sec", 30.0
+        ).value
+        self._last_rising_edge_time = float("-inf")
         # Yaw variance for the seed (rad^2). 0.1 rad^2 ≈ σ 18° — loose
         # enough that the EKF still trusts a later, tighter refinement from
         # CalibrateHeadingFromUndock but tight enough to anchor the filter.
@@ -160,15 +200,54 @@ class DockYawToSetPose(Node):
         if self._need_to_publish:
             self._try_publish()
 
+    def _on_high_level_status(self, msg: HighLevelStatus) -> None:
+        self._high_level_state = int(msg.state)
+
     def _on_status(self, msg: HwStatus) -> None:
         is_charging = bool(msg.is_charging)
 
+        # Suppress all seeding when the BT is in AUTONOMOUS / RECORDING /
+        # MANUAL_MOWING. The robot is in motion and an unexpected charge
+        # signal must not be allowed to overwrite the EKF — that's the
+        # mechanism behind the undock/redock loop in issue #73. We still
+        # update _last_is_charging so the rising-edge detector sees the
+        # transition correctly the moment the BT returns to IDLE.
+        if (
+            self._high_level_state is not None
+            and self._high_level_state in _BLOCK_SEED_STATES
+        ):
+            if is_charging != self._last_is_charging:
+                self.get_logger().warn(
+                    "is_charging→{} during high_level_state={} — "
+                    "seed suppressed (motion-state gate, issue #73)".format(
+                        is_charging, self._high_level_state
+                    )
+                )
+            self._last_is_charging = is_charging
+            return
+
         if self._last_is_charging is None and is_charging:
+            # Boot-time docked detection — exempt from debounce.
             self.get_logger().info(
                 "boot detected docked state → pinning pose to dock while "
                 "charging"
             )
+            self._last_rising_edge_time = time.monotonic()
         elif is_charging and not self._last_is_charging:
+            # Real rising edge: enforce the debounce so charge-pin flicker
+            # cannot snap the EKF back to the dock more than once per
+            # window.
+            now = time.monotonic()
+            since_last = now - self._last_rising_edge_time
+            if since_last < self._rising_edge_debounce_sec:
+                self.get_logger().warn(
+                    "charging rising edge SUPPRESSED ({:.1f}s < {:.1f}s "
+                    "debounce) — treating as charge-pin flicker (issue #73)"
+                    .format(since_last, self._rising_edge_debounce_sec)
+                )
+                self._last_is_charging = is_charging
+                return
+            self._last_rising_edge_time = now
             self.get_logger().info(
                 "charging rising edge → pinning pose to dock while charging"
             )
@@ -189,6 +268,15 @@ class DockYawToSetPose(Node):
             self._try_publish()
 
     def _try_publish(self) -> None:
+        # Defensive duplicate of the state-gate from _on_status: heading
+        # and gps callbacks also call _try_publish whenever _need_to_publish
+        # is set, so they could in principle race a state transition. Cheap
+        # check; saves a wrong-state seed.
+        if (
+            self._high_level_state is not None
+            and self._high_level_state in _BLOCK_SEED_STATES
+        ):
+            return
         # We need GPS for position. Heading comes from either the
         # dock_calibration.yaml file (preferred) or /gnss/heading (fallback).
         if self._latest_gps is None:

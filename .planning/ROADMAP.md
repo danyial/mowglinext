@@ -67,6 +67,18 @@ Plans:
 
 **Acceptance:** End-to-end COMMAND_START → undock → mow → return → autodock with `is_charging` engaged on first attempt at lateral error < 2 cm and yaw error < 1°.
 
+**Plans:** 8 plans
+
+Plans:
+- [ ] 02-01-PLAN.md — Bootstrap: kinematic_icp submodule init + Dockerfile deps (laser_geometry/PCL/sophus) + DockMatchConfidence.msg + 4-pipeline codegen + mowgli_geometry::key_value_parser shared promotion + kiss_icp VoxelHashMap public-API probe (PROBE.md)
+- [ ] 02-02-PLAN.md — mowgli_lidar_docking package skeleton: IDockMatcher contract + dock_scan_io (PCL ASCII + atomic) + confidence_metrics (production+brute-force) + dock_approach_loader + dock_scan_meta_loader + 5 gtest binaries (~15 cases)
+- [ ] 02-03-PLAN.md — dock_scan_capture rclpy library (5-frame voxel-merge, atomic write) + calibrate_imu_yaw_node extension (R-1, no extra operator step) + 7 pytests
+- [ ] 02-04-PLAN.md — dock_scan_match node + KinematicIcpDockMatcher production impl + mtime watcher + TF distance gate + degraded mode + navigation.launch.py wiring + 11 gtests (R-2, R-3)
+- [ ] 02-05-PLAN.md — dock_yaw_to_set_pose.py cascade extension (lidar > file > heading) + 7 cascade pytests + AUTONOMOUS-state regression (R-4)
+- [ ] 02-06-PLAN.md — 5 new BT nodes (RecordDockApproachPose / ApproachDock / FineDock / PreUndockClearanceCheck / PostUndockRtkValidation) + BTContext extension + factory registration + 12 gtests (R-5..R-9, R-11..R-13)
+- [ ] 02-07-PLAN.md — main_tree.xml migration (6 DockRobot sites + UndockSequence extension) + GUI Dock-card extension (useDockMatch hook + DockMatchCard component + topicMap relay per D-12) (R-9, R-10)
+- [ ] 02-08-PLAN.md — Sim infrastructure (synthetic_scan_kicp_publisher + sim_lidar_docking.launch.py + e2e_test extension) + mow_session_monitor extension (D-15) + 02-VERIFICATION.md + Pi5 5-of-5 hardware acceptance checkpoint (operator-gated, autonomous: false)
+
 ### Phase 3 — Smooth outline-pass transitions (≤30° tangent change)
 
 **Status:** ⬜ scheduled after Phase 2 (operator-cosmetic; operator-blocked while #43+#75 not done)

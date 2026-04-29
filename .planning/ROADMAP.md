@@ -43,3 +43,18 @@ Plans:
 - [~] 01-09-PLAN.md — E2E + Pi5 hardware smoke: launch wiring + e2e_test.py update + VALIDATION.md populate + Pi5 Eichenau garden checkpoint (SPEC AC-13). **Automatable scope COMPLETE** (T0 precondition fix + T1 launch+e2e + T2 VALIDATION populate; commits `d20e4025`, `08ae7808`, `5e0683b6`; SUMMARY at `.planning/phases/01-coverage-planner-rewrite/01-09-SUMMARY.md`). **T3 hardware smoke ⬜ pending operator verification** — see SUMMARY.md § "Hardware Checkpoint Procedure".
 - [x] 01-10-PLAN.md — **Gap closure (R-9/R-11 root cause):** Add `uint32 area_index` to `CoverageWaypoint.msg`; regenerate firmware rosserial + Go + TypeScript bindings; refactor `PlanBuilder` to stamp `area_index` on every emitted waypoint via a single `stamp_and_push` lambda (UNDOCK/dock segments → UINT32_MAX sentinel; outline/sweep waypoints → loop index). 3 new gtest cases pin the contract. → SUMMARY at `.planning/phases/01-coverage-planner-rewrite/01-10-SUMMARY.md` (commits `c329a81b`, `36bbbb30`, `bd6fda58`)
 - [x] 01-11-PLAN.md — **Gap closure (R-9/R-11 production fix):** Replace `req->checkpoint.area_index = last_wp.sequence_id` with `last_wp.area_index` in `dispatch_checkpoint_write`; add `BTContext::last_mow_angle_used_deg` propagated by PlanCoverageGoal from `PlanMetadata.mow_angle_used_deg`; early-return on UINT32_MAX sentinel for dock/undock segments. 3 new TEST_F cases run an in-process WriteCheckpoint stub server and capture the request payload to assert the canonical key. → SUMMARY at `.planning/phases/01-coverage-planner-rewrite/01-11-SUMMARY.md` (commits `5405fa60`, `d1361536`, `354066e1`)
+
+
+## Backlog (999.x — not scheduled, not blocking active milestone)
+
+Phases promoted out of `999.x` get renumbered into the active milestone via `/gsd-review-backlog`.
+
+### Phase 999.1 — Single-source robot footprint publisher
+
+**Status:** ⬜ not started
+**GH issue:** [#67](https://github.com/danyial/mowglinext/issues/67)
+**Goal:** Eliminate the three-way manual sync of chassis dimensions across `mowgli_robot.yaml:chassis_*`, `mowgli_robot.yaml:robot_geometry:*`, and `nav2_params.yaml:collision_monitor:PolygonSlow.points` (Architecture Invariant #15) by introducing a `mowgli_footprint_publisher` Python node that derives all three from a single source and publishes the slow-zone polygon on `/robot_footprint_slow`. Switch `nav2_collision_monitor` to `type: polygon_topic`. Delete the duplicated `robot_geometry:` block. Retire Architecture Invariant #15.
+
+**Why backlog and not now:** the three-way manual sync works as long as we co-commit, and 2026-04-29 we just paid the cost (chassis re-measure on the bench → 0.57 × 0.43 × 0.18 propagated to all three files). Half-day of work, but not blocking any current goal — promotable when next chassis-geometry change hits, or when we onboard a non-YF500 platform.
+
+**Out of scope:** PolygonStop re-introduction (separate decision — see commit `cc2a4c4` for why it was dropped).

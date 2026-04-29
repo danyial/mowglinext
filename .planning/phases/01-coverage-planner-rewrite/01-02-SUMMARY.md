@@ -96,7 +96,7 @@ Each task was committed atomically; Task 2 used the TDD RED → GREEN gate seque
 2. **Task 2 RED: failing tests for footprint, pca, atomic_write** — `63933306` (test)
 3. **Task 2 GREEN: implement footprint, pca, atomic_write helpers** — `351f4139` (feat)
 
-**Plan metadata commit:** `<recorded after final commit>` (docs: complete plan)
+**Plan metadata commit:** `92a8c1bd` (docs: complete plan)
 
 ## Files Created/Modified
 

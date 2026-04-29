@@ -77,6 +77,17 @@ def generate_launch_description() -> LaunchDescription:
                 "address": "0.0.0.0",
                 "send_buffer_limit": send_buffer_limit,
                 "num_threads": 0,
+                # foxglove_bridge defaults block any service or topic name
+                # containing `/_` (regex `^(?!.*/_).*$`). That filters out
+                # the auto-generated rclcpp_action service constellation
+                # (`<action>/_action/send_goal`, `_action/get_result`,
+                # `_action/cancel_goal`), which the GUI Preview Plan flow
+                # invokes via the foxglove client as if they were normal
+                # services. Loosen the regex to `.*` so action services
+                # are reachable. Keep the topic filter at the default
+                # since the GUI does not subscribe to `_action/feedback`
+                # or `_action/status` (Preview Plan is request/response).
+                "service_whitelist": [".*"],
             },
         ],
     )

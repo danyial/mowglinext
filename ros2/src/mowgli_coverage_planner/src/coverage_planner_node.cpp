@@ -69,15 +69,17 @@ CoveragePlannerNode::CoveragePlannerNode(const rclcpp::NodeOptions& options)
   areas_dir_ = get_parameter("areas_dir").as_string();
 
   // -------------------------------------------------------------------------
-  // Action server — relative name resolves to /coverage_planner_node/plan_coverage
-  // because the node name is "coverage_planner_node".
+  // Action server — `~/plan_coverage` resolves to /<node-name>/plan_coverage,
+  // matching the GUI's expectation of /coverage_planner_node/plan_coverage.
+  // (Bare "plan_coverage" — without the `~/` prefix — would land at root
+  // namespace `/plan_coverage`, which is not what the GUI expects.)
   // -------------------------------------------------------------------------
   using std::placeholders::_1;
   using std::placeholders::_2;
 
   action_server_ = rclcpp_action::create_server<PlanCoverage>(
       this,
-      "plan_coverage",
+      "~/plan_coverage",
       std::bind(&CoveragePlannerNode::handle_goal, this, _1, _2),
       std::bind(&CoveragePlannerNode::handle_cancel, this, _1),
       std::bind(&CoveragePlannerNode::handle_accepted, this, _1));

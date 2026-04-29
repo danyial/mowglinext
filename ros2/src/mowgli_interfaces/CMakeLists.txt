@@ -28,6 +28,10 @@ set(msg_files
   "msg/TrackedObstacle.msg"
   "msg/CalibrateImuYawStatus.msg"
   "msg/PlanningParams.msg"
+  "msg/CoverageWaypoint.msg"
+  "msg/PlanMetadata.msg"
+  "msg/PlanError.msg"
+  "msg/Checkpoint.msg"
 )
 
 # Declare service files
@@ -49,6 +53,8 @@ set(srv_files
   "srv/CalibrateImuYaw.srv"
   "srv/GetRecoveryPoint.srv"
   "srv/SetPlanningParams.srv"
+  "srv/GetAllAreas.srv"
+  "srv/WriteCheckpoint.srv"
 )
 
 # Declare action files

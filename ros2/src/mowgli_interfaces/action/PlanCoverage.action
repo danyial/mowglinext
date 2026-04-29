@@ -1,22 +1,15 @@
-# Goal
-geometry_msgs/Polygon outer_boundary
-geometry_msgs/Polygon[] obstacles
-float64 mow_angle_deg  # -1 = auto-optimize
-bool skip_outline
-geometry_msgs/Point[] visited_points  # Already-mowed waypoints; planner marks their cells VISITED
+# Goal — per SPEC R-2 (Phase 01-coverage-planner-rewrite)
+geometry_msgs/PoseStamped start_pose       # current robot pose; if header.frame_id is empty, plan starts from dock_pose
+geometry_msgs/PoseStamped dock_pose        # docking pose in map frame
+float32 mow_angle_offset_deg               # -1.0 = auto-rotate by angle_increment from last_mow_angle_deg (SPEC R-9)
+bool resume_from_checkpoint                # true = read .kv files and continue at the open swath (SPEC R-11)
 ---
 # Result
 bool success
-string message
-nav_msgs/Path path             # Full discretized coverage path (swaths + turns)
-nav_msgs/Path outline_path     # Headland outline for visualization
-float64 total_distance
-float64 coverage_area
-# Swath endpoints for swath-by-swath execution (blade on/off control).
-# swath_starts[i] and swath_ends[i] define swath i.
-geometry_msgs/Point[] swath_starts
-geometry_msgs/Point[] swath_ends
+mowgli_interfaces/CoverageWaypoint[] plan
+mowgli_interfaces/PlanMetadata metadata
+mowgli_interfaces/PlanError error          # populated iff success=false
 ---
 # Feedback
-float32 progress_percent
-string phase  # "headland", "decomposition", "swaths", "routing", "path_planning"
+float32 progress_percent                   # 0..100
+string phase                               # "areas_loaded" | "outlines_generated" | "swaths_generated" | "validation_passed"

@@ -1,0 +1,4 @@
+# Snapshot pull of all map areas. Internal ROS2 IPC only (not bridged to GUI).
+# Used by coverage_planner_node at the start of every PlanCoverage.action goal.
+---
+mowgli_interfaces/MapArea[] areas

@@ -1,0 +1,7 @@
+# BT FollowCoveragePlan calls this after each completed swath; planner owns filesystem I/O.
+# Implementation: planner writes <areas_dir>/coverage_<area_index>.kv via atomic
+# temp+fsync+rename+dirfsync (see RESEARCH §7.2).
+mowgli_interfaces/Checkpoint checkpoint
+---
+bool success
+string error_message                       # populated iff success=false

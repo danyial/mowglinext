@@ -132,11 +132,66 @@ SweepResult sweep(const geometry_msgs::msg::Polygon& area,
   const double sin_inv = std::sin(-rot);
   const double cos_inv = std::cos(-rot);
 
-  // 2. Rotate the area into scan-frame.
-  auto rot_area = rotate_polygon(area, sin_rot, cos_rot);
+  // 2. Compute the worst-case footprint corner distance from the pose centre
+  //    (= base_link). The robot can be at ANY yaw on a strip endpoint, so we
+  //    use the MAX corner distance to guarantee that any pose-centre inside
+  //    an inset-by-this-distance polygon places ALL footprint corners safely
+  //    within the original polygon — regardless of yaw and regardless of
+  //    polygon shape (convex / concave / slanted edges).
+  //
+  //    This replaces the old per-axis approach (x_inset_innermost using
+  //    robot_width/2, y_inset using robot_length/2) which assumed the
+  //    polygon's edges were perpendicular to the strip direction at every
+  //    scanline. That assumption breaks for any non-axis-aligned polygon
+  //    edge — a slanted hexagon edge or a concave dent — when the footprint
+  //    extends laterally or forward into a region where the polygon
+  //    boundary has moved closer than the per-axis inset accounted for.
+  //    See GH issue #68 for the failure cases.
+  const double front_x = robot.footprint.robot_length / 2.0
+                         - robot.footprint.drive_axis_x_offset;
+  const double rear_x = -robot.footprint.robot_length / 2.0
+                        - robot.footprint.drive_axis_x_offset;
+  const double half_w = robot.footprint.robot_width / 2.0;
+  const double max_corner_dist = std::max(
+      std::hypot(front_x, half_w),
+      std::hypot(std::abs(rear_x), half_w));
 
-  // 3. Rotate obstacles + expand outward by (robot_width/2 + outline_offset).
-  const double outward = robot.footprint.robot_width / 2.0 + robot.outline_offset;
+  // 3. Step. Same as before.
+  const double step = robot.tool_width - robot.strip_overlap;
+  if (step <= 0.0)
+  {
+    return result;
+  }
+
+  // 4. Inset the working area inward by max_corner_dist + outline_offset
+  //    + (passes-1)*step. This shrinks the area to a "pose-safe" sub-polygon
+  //    where any pose centre inside it is automatically clear of footprint
+  //    violations against any edge of the original polygon. The strip
+  //    layout sweeps inside this inset polygon.
+  const double area_inset_dist =
+      max_corner_dist + robot.outline_offset
+      + static_cast<double>(robot.outline_passes > 0u
+                                ? robot.outline_passes - 1u
+                                : 0u) * step;
+  auto inset_pts =
+      mowgli_geometry::offset_polygon_inward(area.points, area_inset_dist);
+  if (inset_pts.size() < 3)
+  {
+    // Area collapsed entirely under the inset — too small / narrow to mow.
+    // Caller's narrow_area_strategy can take over via a separate path.
+    return result;
+  }
+  geometry_msgs::msg::Polygon inset_area;
+  inset_area.points = inset_pts;
+
+  // 5. Rotate the INSET area into scan-frame.
+  auto rot_area = rotate_polygon(inset_area, sin_rot, cos_rot);
+
+  // 6. Rotate obstacles + expand outward by max_corner_dist + outline_offset.
+  //    Same conservative reasoning as the area inset: any pose-centre
+  //    outside the expanded obstacle keeps all footprint corners clear of
+  //    the original obstacle, regardless of yaw.
+  const double obs_outward = max_corner_dist + robot.outline_offset;
   std::vector<geometry_msgs::msg::Polygon> expanded_obstacles;
   expanded_obstacles.reserve(obstacles.size());
   for (const auto& obs : obstacles)
@@ -145,14 +200,14 @@ SweepResult sweep(const geometry_msgs::msg::Polygon& area,
     auto rot_obs = rotate_polygon(obs, sin_rot, cos_rot);
     // Negative inset = outward expansion.
     auto exp_pts =
-        mowgli_geometry::offset_polygon_inward(rot_obs.points, -outward);
+        mowgli_geometry::offset_polygon_inward(rot_obs.points, -obs_outward);
     if (exp_pts.size() < 3) continue;  // degenerate; skip
     geometry_msgs::msg::Polygon ep;
     ep.points = exp_pts;
     expanded_obstacles.push_back(ep);
   }
 
-  // 4. AABB of rotated area.
+  // 7. AABB of rotated INSET area.
   double min_x = std::numeric_limits<double>::infinity();
   double max_x = -std::numeric_limits<double>::infinity();
   double min_y = std::numeric_limits<double>::infinity();
@@ -165,25 +220,18 @@ SweepResult sweep(const geometry_msgs::msg::Polygon& area,
     max_y = std::max(max_y, static_cast<double>(p.y));
   }
 
-  // 5. Step + first scan line. The innermost outline pass is at
-  //    inset_innermost from the polygon edge; the first sweep scan line sits
-  //    half-step beyond that so the first swath fully clears the outline.
-  const double step = robot.tool_width - robot.strip_overlap;
-  if (step <= 0.0)
-  {
-    return result;
-  }
-  const double x_inset_innermost =
-      robot.footprint.robot_width / 2.0 + robot.outline_offset +
-      static_cast<double>(robot.outline_passes - 1u) * step;
-  const double x_first = min_x + x_inset_innermost + step / 2.0;
-  const double x_last = max_x - x_inset_innermost;
+  // 8. Strip layout. With the inset polygon already accounting for footprint
+  //    corners + outline_offset + (passes-1)*step, the scanline x range is
+  //    just the inset AABB plus a half-step centring offset so successive
+  //    strips are step-spaced.
+  const double x_first = min_x + step / 2.0;
+  const double x_last = max_x;
 
-  // y_inset clears the outline at swath endpoints.
-  const double y_inset = std::max(
-      0.01,
-      robot.footprint.robot_length / 2.0 + robot.outline_offset +
-          static_cast<double>(robot.outline_passes - 1u) * step);
+  // 9. y_inset is no longer needed at swath endpoints — the strip's south
+  //    and north endpoints land directly at the INSET polygon's scanline
+  //    intersections, which are already at distance ≥ max_corner_dist
+  //    + outline_offset from the original polygon edges.
+  const double y_inset = 0.0;
 
   std::uint32_t seq = 0;
   std::uint32_t col = 0;

@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: unknown
-stopped_at: Completed 02-03-PLAN.md
-last_updated: "2026-04-29T22:55:00.000Z"
+stopped_at: Completed 02-04-PLAN.md (KinematicIcpDockMatcher + dock_scan_match node, R-2 + R-3 met)
+last_updated: "2026-04-29T21:57:50.720Z"
 progress:
   total_phases: 2
   completed_phases: 1
   total_plans: 19
-  completed_plans: 14
-  percent: 74
+  completed_plans: 15
+  percent: 79
 ---
 
 # Project state
@@ -41,8 +41,8 @@ progress:
 
 ## Last session
 
-- **Last session:** 2026-04-29T22:55:00.000Z
-- **Stopped at:** Completed 02-03-PLAN.md (sequential executor on `feat/mag-pipeline-resurrect`)
+- **Last session:** 2026-04-29T21:57:15.687Z
+- **Stopped at:** Completed 02-04-PLAN.md (KinematicIcpDockMatcher + dock_scan_match node, R-2 + R-3 met)
 - **Resume file:** None
 - **Blockers:** SPEC AC-13 — operator must execute the Pi5 Eichenau garden smoke (procedure documented in 01-09-SUMMARY.md). Until then, Phase 1 remains in "automatable complete, hardware-verified pending" state. Phase 2 builds + colcon tests are deferred to phase-end podman build (host = macOS, no colcon).
 
@@ -64,6 +64,7 @@ progress:
 | Phase 02 P01 | 31min | 4 tasks | 14 files |
 | Phase 02 P02 | 32 | 2 tasks | 17 files |
 | Phase 02 P03 | 38 | 2 tasks | 7 files |
+| Phase 02 P04 | 35 | 2 tasks | 11 files |
 
 ## Active branch
 
@@ -141,3 +142,9 @@ These were locked in chat on 2026-04-28 before `/gsd-spec-phase` started — the
 | 2026-04-29 | Plan 02-03: tf_transformations import is lazy with inline math fallback | Avoids adding a hard runtime dependency on ros-kilted-tf-transformations just for a single quaternion-to-yaw conversion in the dock_scan extrinsic helper. |
 | 2026-04-29 | Plan 02-03: dock_scan_capture import wrapped in try/except with None sentinel | Calibration node must never crash on legacy installs that have not yet rebuilt mowgli_localization; degrade dock_scan add-on, keep IMU-yaw calibration intact. |
 | 2026-04-29 | Plan 02-03: CLAUDE.md AI #1 says calibrate_imu_yaw_node is rclcpp; disk reality is rclpy | A2 revision (2026-04-27) reverted Decision A back to upstream Python; CLAUDE.md is stale. Followed disk reality; flagged in 02-03-SUMMARY.md Coordination Risks for the human maintainer. |
+| 2026-04-29 | Plan 02-04: KinematicIcpDockMatcher seeds via kicp_.SetPose(anchor) followed by kicp_.VoxelMap().AddPoints(dock_points) — PROBE.md A1 production path | Order is load-bearing: SetPose() internally calls local_map_.Clear() (KinematicICP.hpp:88), so AddPoints MUST come after. Reversing it silently drops the dock points. |
+| 2026-04-29 | Plan 02-04: Reload() destroys + reconstructs the kinematic_icp pipeline via std::optional reset + emplace under std::mutex | Cheaper than per-member reset and immune to stale adaptive-threshold history poisoning a fresh capture. Same mutex protects Match() so a concurrent Reload during Match cannot mid-flight corrupt the voxel map (T-04-07 mitigation). |
+| 2026-04-29 | Plan 02-04: dock_scan_match uses default single-threaded executor (rclcpp::spin) on Pi5 | TF distance gate (gate_distance_m default 5 m) skips RegisterFrame when robot is far from dock — duty cycle stays low enough that MultiThreadedExecutor is unnecessary. Switch only if Plan 02-08 hardware smoke shows scheduling lag. |
+| 2026-04-29 | Plan 02-04: /dock_match/pose published ONLY when trusted=true; /dock_match/confidence published every tick (including degraded + TF-far + scan-missing paths) | Pitfall 6 mitigation: consumers see a clean baseline at t=0 before any scan arrives. Pose absence is the "not yet trusted" signal; conf liveness is the "alive" heartbeat. Both topics are needed for a clean state machine in FineDock onRunning. |
+| 2026-04-29 | Plan 02-04: 180° flip detector (Pitfall 1) uses atan2(R(1,0), R(0,0)) on the rotation matrix + hand-rolled shortest_angular_distance | Keeps the matcher library free of tf2 / angles dependencies. The trust gate downstream collapses (valid && trusted_metric) into a single bool, so a flipped pose surfaces as trusted=false even if the confidence math alone would have let it through. |
+| 2026-04-29 | Plan 02-04: Test ctor injects an IDockMatcher to bypass kiss_icp + LaserProjection + a live tf_buffer in the gtest harness | mtime watcher's dynamic_cast<KinematicIcpDockMatcher*> returns nullptr for the MockMatcher path so the watcher quietly skips Reload — the production Reload path is exercised by ReloadSwapsDockScan in test_kinematic_icp_dock_matcher. End-to-end /scan_kicp -> /dock_match/pose smoke is DEFERRED-TO-PLAN-02-08-SIM. |

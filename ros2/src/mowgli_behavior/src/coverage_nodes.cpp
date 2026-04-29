@@ -311,31 +311,80 @@ void FollowCoveragePlan::dispatch_checkpoint_write(size_t completed_end_idx_excl
     return;
   }
 
+  // Derive per-area swath and outline progress by scanning the completed
+  // prefix of the plan. This gives PlanBuilder the per-area counters it
+  // expects (plan_builder.cpp:242,326) rather than the plan-wide waypoint
+  // index (WR-01/WR-02 fix).
+  //
+  // Outline convention: current_outline_index counts completed outline
+  // passes (0 = none done, 1 = pass done). With outline_passes=1 (default),
+  // a value of 1 causes PlanBuilder to skip the outline block entirely on
+  // resume. We detect completion by observing a transition from an
+  // OUTLINE_WORKING_AREA run to a non-outline waypoint for the same area.
+  // NOTE: OUTLINE_OBSTACLE waypoints are always re-emitted by PlanBuilder
+  // regardless of current_outline_index (there is no skip logic for them),
+  // so we only count OUTLINE_WORKING_AREA transitions here.
+  //
+  // Swath convention: current_swath_index is the number of completed
+  // MOWING_BOUSTROPHEDON pairs for this area. Each pair = 2 waypoints
+  // (swath start + swath end), so count = mow_wp_count / 2.
+  const uint32_t area = last_wp.area_index;
+  uint32_t mow_wp_count = 0;
+  uint32_t outline_passes_done = 0;
+  bool last_was_working_area_outline = false;
+
+  for (size_t i = 0; i < completed_end_idx_exclusive; ++i)
+  {
+    const auto& wp_i = coverage_plan_[i];
+    if (wp_i.area_index != area) continue;
+
+    const bool is_mow =
+        (wp_i.segment_type == CW::SEGMENT_MOWING_BOUSTROPHEDON);
+    const bool is_wa_outline =
+        (wp_i.segment_type == CW::SEGMENT_OUTLINE_WORKING_AREA);
+
+    if (is_mow)
+    {
+      ++mow_wp_count;
+      if (last_was_working_area_outline)
+      {
+        // Transition: outline block → mowing → outline pass complete.
+        ++outline_passes_done;
+      }
+      last_was_working_area_outline = false;
+    }
+    else if (is_wa_outline)
+    {
+      // Track that we are inside a working-area outline run.
+      last_was_working_area_outline = true;
+    }
+    else
+    {
+      // Any other segment type for this area (OUTLINE_OBSTACLE, TRANSIT…)
+      // ends an in-progress working-area outline run without completing it
+      // into a mowing step — leave outline_passes_done unchanged.
+      last_was_working_area_outline = false;
+    }
+  }
+
+  const uint32_t completed_pairs = mow_wp_count / 2u;
+
   // Build the Checkpoint. The planner owns the canonical per-area key
   // (area_index) — we hand it the canonical key the PlanBuilder stamped
   // on this waypoint (Plan 01-10), NOT sequence_id.
   auto req = std::make_shared<mowgli_interfaces::srv::WriteCheckpoint::Request>();
   req->checkpoint.area_index = last_wp.area_index;  // R-9 / R-11 fix
-  req->checkpoint.current_outline_index = 0;
-  req->checkpoint.current_swath_index =
-      static_cast<uint32_t>(completed_end_idx_exclusive - 1);
+  req->checkpoint.current_outline_index = outline_passes_done;  // WR-02 fix
+  req->checkpoint.current_swath_index = completed_pairs;         // WR-01 fix
   req->checkpoint.swath_direction =
       mowgli_interfaces::msg::Checkpoint::SWATH_DIRECTION_FORWARD;
   req->checkpoint.last_completed_swath_index =
-      static_cast<uint32_t>(completed_end_idx_exclusive - 1);
-  req->checkpoint.next_open_swath_index =
-      static_cast<uint32_t>(completed_end_idx_exclusive);
+      (completed_pairs > 0u) ? (completed_pairs - 1u) : 0u;     // WR-01 fix
+  req->checkpoint.next_open_swath_index = completed_pairs;       // WR-01 fix
   // R-9 fix: persist the angle the planner actually used. PlanCoverageGoal
   // captured this from PlanMetadata.mow_angle_used_deg into BTContext.
   req->checkpoint.last_mow_angle_deg = ctx->last_mow_angle_used_deg;
   req->checkpoint.last_swath_endpoint = last_wp.pose.pose;
-
-  if (last_wp.segment_type == CW::SEGMENT_OUTLINE_WORKING_AREA ||
-      last_wp.segment_type == CW::SEGMENT_OUTLINE_OBSTACLE)
-  {
-    req->checkpoint.current_outline_index =
-        static_cast<uint32_t>(completed_end_idx_exclusive - 1);
-  }
 
   // Fire-and-forget: we only WARN on failure (Q1 lock — next successful
   // checkpoint is the recovery point). Discard the future immediately;

@@ -52,8 +52,13 @@ target_include_directories(mowgli_coverage_planner_lib PUBLIC
   $<INSTALL_INTERFACE:include>
 )
 target_compile_features(mowgli_coverage_planner_lib PUBLIC cxx_std_17)
+# mowgli_geometry is a header-only INTERFACE library. Its install exports the
+# namespaced imported target `mowgli_geometry::mowgli_geometry`; consuming the
+# bare name here would silently degrade to a literal `-lmowgli_geometry` and
+# drop the INTERFACE_INCLUDE_DIRECTORIES propagation, which produced
+# `fatal error: mowgli_geometry/footprint.hpp: No such file or directory`
+# during Plan 01-07's build (and was deferred to Plan 01-09 for repair).
 target_link_libraries(mowgli_coverage_planner_lib PUBLIC
-  mowgli_geometry
   Eigen3::Eigen
 )
 
@@ -61,6 +66,7 @@ ament_target_dependencies(mowgli_coverage_planner_lib PUBLIC
   rclcpp
   rclcpp_action
   mowgli_interfaces
+  mowgli_geometry
   nav_msgs
   geometry_msgs
   tf2

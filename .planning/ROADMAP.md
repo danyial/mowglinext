@@ -71,7 +71,7 @@ Plans:
 
 Plans:
 - [x] 02-01-PLAN.md — Bootstrap: kinematic_icp submodule init + Dockerfile deps (laser_geometry/PCL/sophus) + DockMatchConfidence.msg + 4-pipeline codegen + mowgli_geometry::key_value_parser shared promotion + kiss_icp VoxelHashMap public-API probe (PROBE.md) → SUMMARY at `.planning/phases/02-lidar-dock-pose-estimation/02-01-SUMMARY.md` (commits `026fa024`, `e41e8534`, `ce00312f`)
-- [ ] 02-02-PLAN.md — mowgli_lidar_docking package skeleton: IDockMatcher contract + dock_scan_io (PCL ASCII + atomic) + confidence_metrics (production+brute-force) + dock_approach_loader + dock_scan_meta_loader + 5 gtest binaries (~15 cases)
+- [x] 02-02-PLAN.md — mowgli_lidar_docking package skeleton: IDockMatcher contract + dock_scan_io (PCL ASCII + atomic) + confidence_metrics (production+brute-force) + dock_approach_loader + dock_scan_meta_loader + 5 gtest binaries (15 cases) → SUMMARY at `.planning/phases/02-lidar-dock-pose-estimation/02-02-SUMMARY.md` (commits `70785508`, `0d0ae778`)
 - [ ] 02-03-PLAN.md — dock_scan_capture rclpy library (5-frame voxel-merge, atomic write) + calibrate_imu_yaw_node extension (R-1, no extra operator step) + 7 pytests
 - [ ] 02-04-PLAN.md — dock_scan_match node + KinematicIcpDockMatcher production impl + mtime watcher + TF distance gate + degraded mode + navigation.launch.py wiring + 11 gtests (R-2, R-3)
 - [ ] 02-05-PLAN.md — dock_yaw_to_set_pose.py cascade extension (lidar > file > heading) + 7 cascade pytests + AUTONOMOUS-state regression (R-4)

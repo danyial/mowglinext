@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: unknown
-stopped_at: Completed 02-01-PLAN.md (Wave 0 scaffolding for Phase 2 LiDAR docking)
-last_updated: "2026-04-29T20:53:25.194Z"
+stopped_at: Completed 02-02-PLAN.md
+last_updated: "2026-04-29T21:23:26.779Z"
 progress:
   total_phases: 2
   completed_phases: 1
   total_plans: 19
-  completed_plans: 12
-  percent: 63
+  completed_plans: 13
+  percent: 68
 ---
 
 # Project state
@@ -41,9 +41,9 @@ progress:
 
 ## Last session
 
-- **Last session:** 2026-04-29T20:53:25.185Z
-- **Stopped at:** Completed 02-01-PLAN.md (Wave 0 scaffolding for Phase 2 LiDAR docking)
-- **Resume file:** None — Wave 1 plans 02-02 + 02-03 ready; calibrate_imu_yaw_node yaml-format migration tracked as Plan 02-03 hand-off note
+- **Last session:** 2026-04-29T21:22:46.393Z
+- **Stopped at:** Completed 02-02-PLAN.md
+- **Resume file:** None
 - **Blockers:** SPEC AC-13 — operator must execute the Pi5 Eichenau garden smoke (procedure documented in 01-09-SUMMARY.md). Until then, Phase 1 remains in "automatable complete, hardware-verified pending" state.
 
 ## Performance Metrics
@@ -62,6 +62,7 @@ progress:
 | Phase 01 P10 | 6min | 2 tasks | 9 files |
 | 01    | 11   | 4min     | 4     | 4     |
 | Phase 02 P01 | 31min | 4 tasks | 14 files |
+| Phase 02 P02 | 32 | 2 tasks | 17 files |
 
 ## Active branch
 
@@ -128,3 +129,8 @@ These were locked in chat on 2026-04-28 before `/gsd-spec-phase` started — the
 | 2026-04-29 | Plan 01-09: SUMMARY.md is intentionally non-final | SPEC AC-13 hardware smoke is operator-gated (autonomous: false). T0+T1+T2 are ✅ green; T3 (Pi5 Eichenau garden) is ⬜ pending. Phase 1 is in "automatable scope complete, hardware-verified pending" until the operator returns the smoke verdict. |
 | 2026-04-29 | Plan 01-11: kNoArea early-return placed before checkpoint_client_ lazy creation | Avoids creating the DDS client singleton for dock/undock segments — no unnecessary DDS participant churn on non-area waypoints. T-11-03 mitigation. |
 | 2026-04-29 | Plan 01-11: Same-node client+server pattern in WriteCheckpointAreaIndexTest | Bypasses Cyclone DDS inter-node flakiness (01-08 Deviation 4) while still exercising the full rclcpp client path. Protected (not public) lift of coverage_plan_ + dispatch_checkpoint_write. |
+| 2026-04-29 | Plan 02-02: kiss_icp::VoxelHashMap production code path on both PROBE.md A1+A2 verdicts; no fallback path needed | A1 (AddPoints) + A2 (GetClosestNeighbor) both confirmed public via struct default access in kiss_icp v1.2.0 |
+| 2026-04-29 | Plan 02-02: GetClosestNeighbor returns std::tuple<Eigen::Vector3d, double>; confidence_metrics.cpp uses returned squared distance directly | Plan-snippet showed `Eigen::Vector3d nn = voxel_map.GetClosestNeighbor(p)` which would have failed to compile; PROBE.md verbatim declaration is the source of truth |
+| 2026-04-29 | Plan 02-02: mowgli_lidar_docking CMakeLists uses ament_target_dependencies(... mowgli_geometry kinematic_icp ...) instead of explicit namespaced IMPORTED targets | Mirrors mowgli_coverage_planner Plan 01-05 pattern (lines 65-74); safe across kinematic_icp upstream releases that may rename per-component CMake targets |
+| 2026-04-29 | Plan 02-02: PCD atomic write renders canonical PCD v0.7 ASCII to a std::string and routes through mowgli_geometry::atomic_write | PCL savePCDFile owns its own fd with no public hook to redirect to a writable string buffer in the Kilted apt build of PCL — hand-rolled ASCII renderer is the simpler path |
+| 2026-04-29 | Plan 02-02: dock_scan_meta_age_exceeds uses timegm-based real day arithmetic | Lex compare on raw ISO strings (RESEARCH §A5) is the documented failure mode at year boundaries / clock skew; T-02-06 mitigation requires real day arithmetic |

@@ -57,7 +57,6 @@ void registerAllNodes(BT::BehaviorTreeFactory& factory)
   factory.registerNodeType<NavigateInsideBoundary>("NavigateInsideBoundary");
   factory.registerNodeType<BackUp>("BackUp");
   factory.registerNodeType<ClearCommand>("ClearCommand");
-  factory.registerNodeType<IncrementSkippedSwaths>("IncrementSkippedSwaths");
   factory.registerNodeType<SaveObstacles>("SaveObstacles");
   factory.registerNodeType<SetNavMode>("SetNavMode");
   factory.registerNodeType<WasRainingAtStart>("WasRainingAtStart");
@@ -69,12 +68,11 @@ void registerAllNodes(BT::BehaviorTreeFactory& factory)
   factory.registerNodeType<RecordResumeUndockFailure>("RecordResumeUndockFailure");
   factory.registerNodeType<ResetEmergency>("ResetEmergency");
 
-  // Cell-based coverage nodes (strip-by-strip dynamic coverage)
-  factory.registerNodeType<GetNextUnmowedArea>("GetNextUnmowedArea");
-  factory.registerNodeType<GetNextStrip>("GetNextStrip");
-  factory.registerNodeType<FollowStrip>("FollowStrip");
-  factory.registerNodeType<TransitToStrip>("TransitToStrip");
-  factory.registerNodeType<OutlineArea>("OutlineArea");
+  // Single-shot coverage nodes (Plan 01-08: replaces the legacy 5-class
+  // pull-path scheme with PlanCoverageGoal + FollowCoveragePlan that consume
+  // /coverage_planner_node/plan_coverage and dispatch per-segment Nav2 calls).
+  factory.registerNodeType<PlanCoverageGoal>("PlanCoverageGoal");
+  factory.registerNodeType<FollowCoveragePlan>("FollowCoveragePlan");
 
   // Area recording node
   factory.registerNodeType<RecordArea>("RecordArea");

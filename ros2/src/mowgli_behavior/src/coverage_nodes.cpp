@@ -15,611 +15,560 @@
 
 #include "mowgli_behavior/coverage_nodes.hpp"
 
+#include <chrono>
+
 #include "action_msgs/msg/goal_status.hpp"
-#include "tf2/exceptions.h"
 
 namespace mowgli_behavior
 {
 
 // ===========================================================================
-// GetNextStrip — fetch next unmowed strip from map_server
+// PlanCoverageGoal — request a coverage plan from coverage_planner_node.
 // ===========================================================================
 
-BT::NodeStatus GetNextStrip::onStart()
+BT::NodeStatus PlanCoverageGoal::onStart()
 {
   auto ctx = config().blackboard->get<std::shared_ptr<BTContext>>("context");
-  auto helper = ctx->helper_node;
 
-  if (!client_)
+  // Reset previous run state (StatefulActionNode reuses instances).
+  goal_handle_.reset();
+  result_requested_ = false;
+
+  if (!action_client_)
   {
-    client_ = helper->create_client<mowgli_interfaces::srv::GetNextStrip>(
-        "/map_server_node/get_next_strip");
+    action_client_ = rclcpp_action::create_client<Action>(
+        ctx->node, "/coverage_planner_node/plan_coverage");
   }
 
-  if (!client_->wait_for_service(std::chrono::seconds(2)))
+  if (!action_client_->wait_for_action_server(std::chrono::seconds(5)))
   {
-    RCLCPP_ERROR(ctx->node->get_logger(), "GetNextStrip: service not available");
+    RCLCPP_ERROR(ctx->node->get_logger(),
+                 "PlanCoverageGoal: /coverage_planner_node/plan_coverage not available");
     return BT::NodeStatus::FAILURE;
   }
 
-  auto request = std::make_shared<mowgli_interfaces::srv::GetNextStrip::Request>();
-  uint32_t area_idx = 0;
-  getInput<uint32_t>("area_index", area_idx);
-  request->area_index = area_idx;
+  // Build the goal. SPEC R-2 schema (Plan 01-01).
+  Action::Goal goal;
 
-  try
-  {
-    auto tf = ctx->tf_buffer->lookupTransform("map", "base_footprint", tf2::TimePointZero);
-    request->robot_x = tf.transform.translation.x;
-    request->robot_y = tf.transform.translation.y;
-  }
-  catch (const tf2::TransformException&)
-  {
-    request->robot_x = 0.0;
-    request->robot_y = 0.0;
-  }
-  request->prefer_headland = false;
+  // start_pose: leave header.frame_id empty so planner falls back to dock_pose.
+  // Future enhancement: snapshot ctx->gps_x/gps_y here once a current-pose
+  // tracker exists in BTContext.
+  goal.start_pose.header.frame_id = "";
 
-  // Synchronous service call — poll future without spinning (avoids executor deadlock)
-  auto future = client_->async_send_request(request);
-  {
-    auto timeout = std::chrono::seconds(5);
-    auto start = std::chrono::steady_clock::now();
-    bool completed = false;
-    while (rclcpp::ok())
-    {
-      if (future.wait_for(std::chrono::milliseconds(10)) == std::future_status::ready)
-      {
-        completed = true;
-        break;
-      }
-      if (std::chrono::steady_clock::now() - start > timeout)
-      {
-        break;
-      }
-    }
-    if (!completed)
-    {
-      RCLCPP_ERROR(ctx->node->get_logger(), "GetNextStrip: service call timed out");
-      return BT::NodeStatus::FAILURE;
-    }
-  }
+  goal.dock_pose.header.frame_id = "map";
+  goal.dock_pose.header.stamp = ctx->node->now();
+  goal.dock_pose.pose.position.x = ctx->dock_x;
+  goal.dock_pose.pose.position.y = ctx->dock_y;
+  goal.dock_pose.pose.position.z = 0.0;
+  // Yaw -> quaternion for dock_pose.
+  const double yaw = ctx->dock_yaw;
+  goal.dock_pose.pose.orientation.z = std::sin(yaw / 2.0);
+  goal.dock_pose.pose.orientation.w = std::cos(yaw / 2.0);
 
-  auto response = future.get();
+  // Auto-rotate (planner uses persisted last_mow_angle_deg + angle_increment).
+  goal.mow_angle_offset_deg = -1.0F;
 
-  if (!response->success)
-  {
-    RCLCPP_ERROR(ctx->node->get_logger(), "GetNextStrip: service returned failure");
-    return BT::NodeStatus::FAILURE;
-  }
+  // Resume flag: true after a charge cycle. The dock-detect / emergency-reset
+  // logic sets ctx->resume_undock_failures > 0 only on successful resume.
+  // Conservative default: always attempt to read checkpoint files so the
+  // planner can resume mid-area if .kv exists. Missing files = fresh plan.
+  goal.resume_from_checkpoint = true;
 
-  if (response->coverage_complete)
-  {
-    RCLCPP_INFO(ctx->node->get_logger(),
-                "GetNextStrip: coverage complete (%.1f%%)",
-                response->coverage_percent);
-    return BT::NodeStatus::FAILURE;  // FAILURE = no more strips → loop ends
-  }
-
-  if (response->strip_path.poses.empty())
-  {
-    RCLCPP_WARN(ctx->node->get_logger(), "GetNextStrip: empty strip path");
-    return BT::NodeStatus::FAILURE;
-  }
-
-  ctx->current_strip_path = response->strip_path;
-  ctx->current_transit_goal = response->transit_goal;
-  ctx->coverage_percent = response->coverage_percent;
+  goal_future_ = action_client_->async_send_goal(goal);
 
   RCLCPP_INFO(ctx->node->get_logger(),
-              "GetNextStrip: %zu poses, %.1f%% coverage, %u strips left",
-              response->strip_path.poses.size(),
-              response->coverage_percent,
-              response->strips_remaining);
+              "PlanCoverageGoal: sent goal (dock=(%.2f, %.2f, yaw=%.2f), auto-rotate, resume=true)",
+              ctx->dock_x, ctx->dock_y, ctx->dock_yaw);
 
-  return BT::NodeStatus::SUCCESS;
+  return BT::NodeStatus::RUNNING;
 }
 
-BT::NodeStatus GetNextStrip::onRunning()
-{
-  return BT::NodeStatus::SUCCESS;
-}
-
-void GetNextStrip::onHalted()
-{
-}
-
-// ===========================================================================
-// FollowStrip — follow strip path with FTCController
-// ===========================================================================
-
-BT::NodeStatus FollowStrip::onStart()
+BT::NodeStatus PlanCoverageGoal::onRunning()
 {
   auto ctx = config().blackboard->get<std::shared_ptr<BTContext>>("context");
 
-  if (ctx->current_strip_path.poses.empty())
+  // Phase 1: wait for goal acceptance.
+  if (!goal_handle_)
   {
-    RCLCPP_ERROR(ctx->node->get_logger(), "FollowStrip: no strip path in context");
+    if (goal_future_.wait_for(std::chrono::milliseconds(0)) != std::future_status::ready)
+    {
+      return BT::NodeStatus::RUNNING;
+    }
+    goal_handle_ = goal_future_.get();
+    if (!goal_handle_)
+    {
+      RCLCPP_ERROR(ctx->node->get_logger(),
+                   "PlanCoverageGoal: goal rejected by coverage_planner_node");
+      return BT::NodeStatus::FAILURE;
+    }
+    RCLCPP_INFO(ctx->node->get_logger(), "PlanCoverageGoal: goal accepted");
+  }
+
+  // Phase 2: request the result future once.
+  if (!result_requested_)
+  {
+    result_future_ = action_client_->async_get_result(goal_handle_);
+    result_requested_ = true;
+  }
+
+  if (result_future_.wait_for(std::chrono::milliseconds(0)) != std::future_status::ready)
+  {
+    return BT::NodeStatus::RUNNING;
+  }
+
+  auto wrapped = result_future_.get();
+
+  if (wrapped.code != rclcpp_action::ResultCode::SUCCEEDED)
+  {
+    RCLCPP_ERROR(ctx->node->get_logger(),
+                 "PlanCoverageGoal: action ended with code %d (not SUCCEEDED)",
+                 static_cast<int>(wrapped.code));
     return BT::NodeStatus::FAILURE;
   }
+
+  if (!wrapped.result || !wrapped.result->success)
+  {
+    const std::string err = (wrapped.result && !wrapped.result->error.human_readable.empty())
+                                ? wrapped.result->error.human_readable
+                                : std::string("(no error message)");
+    RCLCPP_ERROR(ctx->node->get_logger(),
+                 "PlanCoverageGoal: planner returned success=false: %s",
+                 err.c_str());
+    return BT::NodeStatus::FAILURE;
+  }
+
+  if (wrapped.result->plan.empty())
+  {
+    RCLCPP_ERROR(ctx->node->get_logger(),
+                 "PlanCoverageGoal: planner returned success=true but plan is empty");
+    return BT::NodeStatus::FAILURE;
+  }
+
+  // Snapshot into BTContext blackboard. FollowCoveragePlan reads it on its
+  // own onStart().
+  ctx->coverage_plan = wrapped.result->plan;
+
+  RCLCPP_INFO(ctx->node->get_logger(),
+              "PlanCoverageGoal: received plan with %zu waypoints (mow_angle=%.1f deg)",
+              ctx->coverage_plan.size(),
+              wrapped.result->metadata.mow_angle_used_deg);
+
+  return BT::NodeStatus::SUCCESS;
+}
+
+void PlanCoverageGoal::onHalted()
+{
+  if (goal_handle_ && action_client_)
+  {
+    action_client_->async_cancel_goal(goal_handle_);
+  }
+  goal_handle_.reset();
+  result_requested_ = false;
+}
+
+// ===========================================================================
+// FollowCoveragePlan — sequentially execute coverage_plan from blackboard.
+// ===========================================================================
+
+BT::NodeStatus FollowCoveragePlan::onStart()
+{
+  auto ctx = config().blackboard->get<std::shared_ptr<BTContext>>("context");
+
+  if (ctx->coverage_plan.empty())
+  {
+    RCLCPP_ERROR(ctx->node->get_logger(),
+                 "FollowCoveragePlan: ctx->coverage_plan empty (PlanCoverageGoal must run first)");
+    return BT::NodeStatus::FAILURE;
+  }
+
+  // Snapshot — protect against concurrent blackboard writes.
+  coverage_plan_ = ctx->coverage_plan;
+  current_waypoint_idx_ = 0;
+  group_end_idx_exclusive_ = 0;
+
+  follow_handle_.reset();
+  nav_handle_.reset();
+  blade_currently_enabled_ = false;
+  state_ = InternalState::IDLE;
+  checkpoint_in_flight_ = false;
 
   if (!follow_client_)
   {
     follow_client_ = rclcpp_action::create_client<Nav2FollowPath>(ctx->node, "/follow_path");
   }
-  if (!follow_client_->wait_for_action_server(std::chrono::seconds(5)))
-  {
-    RCLCPP_ERROR(ctx->node->get_logger(), "FollowStrip: follow_path not available");
-    return BT::NodeStatus::FAILURE;
-  }
-
-  setBladeEnabled(true);
-  blade_start_time_ = std::chrono::steady_clock::now();
-  goal_sent_ = false;
-
-  RCLCPP_INFO(ctx->node->get_logger(),
-              "FollowStrip: blade enabled, waiting %.1fs for spinup",
-              kBladeSpinupDelaySec);
-
-  return BT::NodeStatus::RUNNING;
-}
-
-BT::NodeStatus FollowStrip::onRunning()
-{
-  auto ctx = config().blackboard->get<std::shared_ptr<BTContext>>("context");
-
-  // Wait for blade to spin up before sending the path goal
-  if (!goal_sent_)
-  {
-    auto elapsed = std::chrono::steady_clock::now() - blade_start_time_;
-    if (elapsed < std::chrono::duration<double>(kBladeSpinupDelaySec))
-      return BT::NodeStatus::RUNNING;
-
-    // Spinup complete — send path goal
-    Nav2FollowPath::Goal goal;
-    goal.path = ctx->current_strip_path;
-    goal.controller_id = "FollowCoveragePath";
-    goal.goal_checker_id = "coverage_goal_checker";
-
-    follow_handle_.reset();
-    follow_future_ = follow_client_->async_send_goal(goal);
-    goal_sent_ = true;
-
-    RCLCPP_INFO(ctx->node->get_logger(),
-                "FollowStrip: sent %zu poses to FTCController",
-                goal.path.poses.size());
-
-    return BT::NodeStatus::RUNNING;
-  }
-
-  if (!follow_handle_)
-  {
-    if (follow_future_.wait_for(std::chrono::milliseconds(0)) != std::future_status::ready)
-      return BT::NodeStatus::RUNNING;
-    follow_handle_ = follow_future_.get();
-    if (!follow_handle_)
-    {
-      RCLCPP_ERROR(ctx->node->get_logger(), "FollowStrip: goal rejected");
-      setBladeEnabled(false);
-      return BT::NodeStatus::FAILURE;
-    }
-  }
-
-  auto status = follow_handle_->get_status();
-
-  if (status == action_msgs::msg::GoalStatus::STATUS_SUCCEEDED)
-  {
-    RCLCPP_INFO(ctx->node->get_logger(), "FollowStrip: strip completed");
-    follow_handle_.reset();
-    setBladeEnabled(false);
-    return BT::NodeStatus::SUCCESS;
-  }
-
-  if (status == action_msgs::msg::GoalStatus::STATUS_ABORTED ||
-      status == action_msgs::msg::GoalStatus::STATUS_CANCELED)
-  {
-    RCLCPP_WARN(ctx->node->get_logger(), "FollowStrip: aborted/canceled");
-    follow_handle_.reset();
-    setBladeEnabled(false);
-    return BT::NodeStatus::FAILURE;
-  }
-
-  return BT::NodeStatus::RUNNING;
-}
-
-void FollowStrip::onHalted()
-{
-  if (follow_handle_)
-  {
-    follow_client_->async_cancel_goal(follow_handle_);
-  }
-  follow_handle_.reset();
-  setBladeEnabled(false);
-}
-
-void FollowStrip::setBladeEnabled(bool enabled)
-{
-  auto ctx = config().blackboard->get<std::shared_ptr<BTContext>>("context");
-  if (!blade_client_)
-  {
-    blade_client_ = ctx->node->create_client<mowgli_interfaces::srv::MowerControl>(
-        "/hardware_bridge/mower_control");
-  }
-  if (!blade_client_->wait_for_service(std::chrono::milliseconds(200)))
-    return;
-
-  auto req = std::make_shared<mowgli_interfaces::srv::MowerControl::Request>();
-  req->mow_enabled = enabled ? 1u : 0u;
-  blade_client_->async_send_request(req);
-}
-
-// ===========================================================================
-// TransitToStrip — navigate to strip start using Nav2
-// ===========================================================================
-
-BT::NodeStatus TransitToStrip::onStart()
-{
-  auto ctx = config().blackboard->get<std::shared_ptr<BTContext>>("context");
-
-  RCLCPP_INFO(ctx->node->get_logger(),
-              "TransitToStrip: goal frame='%s' pos=(%.2f, %.2f)",
-              ctx->current_transit_goal.header.frame_id.c_str(),
-              ctx->current_transit_goal.pose.position.x,
-              ctx->current_transit_goal.pose.position.y);
-
   if (!nav_client_)
   {
     nav_client_ = rclcpp_action::create_client<Nav2Navigate>(ctx->node, "/navigate_to_pose");
   }
+
+  if (!follow_client_->wait_for_action_server(std::chrono::seconds(5)))
+  {
+    RCLCPP_ERROR(ctx->node->get_logger(),
+                 "FollowCoveragePlan: /follow_path action server not available");
+    setBladeEnabled(false);
+    return BT::NodeStatus::FAILURE;
+  }
   if (!nav_client_->wait_for_action_server(std::chrono::seconds(5)))
   {
-    RCLCPP_ERROR(ctx->node->get_logger(), "TransitToStrip: navigate_to_pose not available");
+    RCLCPP_ERROR(ctx->node->get_logger(),
+                 "FollowCoveragePlan: /navigate_to_pose action server not available");
+    setBladeEnabled(false);
     return BT::NodeStatus::FAILURE;
   }
 
-  Nav2Navigate::Goal goal;
-  goal.pose = ctx->current_transit_goal;
-
-  nav_handle_.reset();
-  nav_future_ = nav_client_->async_send_goal(goal);
-
   RCLCPP_INFO(ctx->node->get_logger(),
-              "TransitToStrip: navigating to (%.2f, %.2f)",
-              goal.pose.pose.position.x,
-              goal.pose.pose.position.y);
+              "FollowCoveragePlan: starting execution of %zu-waypoint plan",
+              coverage_plan_.size());
 
   return BT::NodeStatus::RUNNING;
 }
 
-BT::NodeStatus TransitToStrip::onRunning()
+size_t FollowCoveragePlan::group_end_index(size_t start_idx) const
 {
-  auto ctx = config().blackboard->get<std::shared_ptr<BTContext>>("context");
+  using CW = mowgli_interfaces::msg::CoverageWaypoint;
+  if (start_idx >= coverage_plan_.size()) return start_idx;
 
-  if (!nav_handle_)
+  const auto seg = coverage_plan_[start_idx].segment_type;
+
+  // MOWING_BOUSTROPHEDON: pair of two (swath start + end) per RESEARCH §10 Q3.
+  if (seg == CW::SEGMENT_MOWING_BOUSTROPHEDON)
   {
-    if (nav_future_.wait_for(std::chrono::milliseconds(0)) != std::future_status::ready)
-      return BT::NodeStatus::RUNNING;
-    nav_handle_ = nav_future_.get();
-    if (!nav_handle_)
+    size_t end = start_idx + 1;
+    if (end < coverage_plan_.size() && coverage_plan_[end].segment_type == seg)
     {
-      RCLCPP_WARN(ctx->node->get_logger(), "TransitToStrip: goal rejected");
-      return BT::NodeStatus::FAILURE;
+      ++end;
     }
+    return end;  // exclusive
   }
 
-  auto status = nav_handle_->get_status();
-
-  if (status == action_msgs::msg::GoalStatus::STATUS_SUCCEEDED)
+  // OUTLINE_*: contiguous run of same-segment-type vertices = one closed loop.
+  if (seg == CW::SEGMENT_OUTLINE_WORKING_AREA || seg == CW::SEGMENT_OUTLINE_OBSTACLE)
   {
-    RCLCPP_INFO(ctx->node->get_logger(), "TransitToStrip: arrived at strip start");
-    nav_handle_.reset();
+    size_t end = start_idx + 1;
+    while (end < coverage_plan_.size() && coverage_plan_[end].segment_type == seg)
+    {
+      ++end;
+    }
+    return end;
+  }
+
+  // Nav2-dispatched (UNDOCK / TRANSIT / DOCK_APPROACH / DOCKING / RETURN_TO_DOCK):
+  // one waypoint per call.
+  return start_idx + 1;
+}
+
+nav_msgs::msg::Path FollowCoveragePlan::build_path_segment(size_t start_idx,
+                                                            size_t end_idx_exclusive) const
+{
+  nav_msgs::msg::Path path;
+  path.header.frame_id = "map";
+  if (start_idx < coverage_plan_.size())
+  {
+    path.header.stamp = coverage_plan_[start_idx].pose.header.stamp;
+  }
+  path.poses.reserve(end_idx_exclusive - start_idx);
+  for (size_t i = start_idx; i < end_idx_exclusive && i < coverage_plan_.size(); ++i)
+  {
+    path.poses.push_back(coverage_plan_[i].pose);
+  }
+  return path;
+}
+
+void FollowCoveragePlan::dispatch_checkpoint_write(size_t completed_end_idx_exclusive)
+{
+  using CW = mowgli_interfaces::msg::CoverageWaypoint;
+  auto ctx = config().blackboard->get<std::shared_ptr<BTContext>>("context");
+
+  if (completed_end_idx_exclusive == 0 || completed_end_idx_exclusive > coverage_plan_.size())
+  {
+    return;
+  }
+
+  if (!checkpoint_client_)
+  {
+    checkpoint_client_ = ctx->node->create_client<mowgli_interfaces::srv::WriteCheckpoint>(
+        "/coverage_planner_node/write_checkpoint");
+  }
+
+  if (!checkpoint_client_->wait_for_service(std::chrono::milliseconds(200)))
+  {
+    RCLCPP_WARN(ctx->node->get_logger(),
+                "FollowCoveragePlan: WriteCheckpoint service unavailable, skipping (next "
+                "successful checkpoint is the recovery point)");
+    return;
+  }
+
+  // Build a Checkpoint reflecting the just-completed segment. The planner
+  // owns filesystem I/O — we hand it a Checkpoint message and it writes the
+  // <areas_dir>/coverage_<area_index>.kv file atomically (Plan 01-05).
+  const auto& last_wp = coverage_plan_[completed_end_idx_exclusive - 1];
+
+  auto req = std::make_shared<mowgli_interfaces::srv::WriteCheckpoint::Request>();
+  req->checkpoint.area_index = last_wp.sequence_id;  // best-effort, planner owns the canonical key
+  req->checkpoint.current_outline_index = 0;
+  req->checkpoint.current_swath_index = static_cast<uint32_t>(last_wp.sequence_id);
+  req->checkpoint.swath_direction =
+      mowgli_interfaces::msg::Checkpoint::SWATH_DIRECTION_FORWARD;
+  req->checkpoint.last_completed_swath_index = static_cast<uint32_t>(last_wp.sequence_id);
+  req->checkpoint.next_open_swath_index = static_cast<uint32_t>(last_wp.sequence_id) + 1u;
+  req->checkpoint.last_mow_angle_deg = 0.0;  // Planner derives this from its own state.
+  req->checkpoint.last_swath_endpoint = last_wp.pose.pose;
+
+  // Tag for log/diagnostic clarity.
+  if (last_wp.segment_type == CW::SEGMENT_OUTLINE_WORKING_AREA ||
+      last_wp.segment_type == CW::SEGMENT_OUTLINE_OBSTACLE)
+  {
+    req->checkpoint.current_outline_index =
+        static_cast<uint32_t>(completed_end_idx_exclusive - 1);
+  }
+
+  // Fire-and-forget: we only WARN on failure (Q1 lock — next successful
+  // checkpoint is the recovery point). Discard the future immediately;
+  // the service handler completes asynchronously inside the planner.
+  checkpoint_client_->async_send_request(req);
+
+  RCLCPP_DEBUG(ctx->node->get_logger(),
+               "FollowCoveragePlan: dispatched checkpoint after waypoint %zu",
+               completed_end_idx_exclusive - 1);
+}
+
+BT::NodeStatus FollowCoveragePlan::onRunning()
+{
+  using CW = mowgli_interfaces::msg::CoverageWaypoint;
+  auto ctx = config().blackboard->get<std::shared_ptr<BTContext>>("context");
+
+  // Plan exhausted -> SUCCESS, blade off.
+  if (current_waypoint_idx_ >= coverage_plan_.size())
+  {
+    setBladeEnabled(false);
+    blade_currently_enabled_ = false;
+    RCLCPP_INFO(ctx->node->get_logger(),
+                "FollowCoveragePlan: plan exhausted (%zu waypoints)",
+                coverage_plan_.size());
     return BT::NodeStatus::SUCCESS;
   }
 
-  if (status == action_msgs::msg::GoalStatus::STATUS_ABORTED ||
-      status == action_msgs::msg::GoalStatus::STATUS_CANCELED)
+  const auto& wp = coverage_plan_[current_waypoint_idx_];
+  const bool target_blade = should_blade_enable(wp);
+
+  switch (state_)
   {
-    RCLCPP_WARN(ctx->node->get_logger(), "TransitToStrip: navigation failed");
-    nav_handle_.reset();
-    return BT::NodeStatus::FAILURE;
-  }
-
-  return BT::NodeStatus::RUNNING;
-}
-
-void TransitToStrip::onHalted()
-{
-  if (nav_handle_)
-  {
-    nav_client_->async_cancel_goal(nav_handle_);
-  }
-  nav_handle_.reset();
-}
-
-// ===========================================================================
-// GetNextUnmowedArea — iterate areas, find first with strips remaining
-// ===========================================================================
-
-BT::NodeStatus GetNextUnmowedArea::tick()
-{
-  auto ctx = config().blackboard->get<std::shared_ptr<BTContext>>("context");
-  auto helper = ctx->helper_node;
-
-  if (!client_)
-  {
-    client_ = helper->create_client<mowgli_interfaces::srv::GetCoverageStatus>(
-        "/map_server_node/get_coverage_status");
-  }
-
-  if (!client_->wait_for_service(std::chrono::seconds(2)))
-  {
-    RCLCPP_ERROR(ctx->node->get_logger(),
-                 "GetNextUnmowedArea: get_coverage_status service not available");
-    return BT::NodeStatus::FAILURE;
-  }
-
-  uint32_t max_areas = 20;
-  getInput<uint32_t>("max_areas", max_areas);
-
-  uint32_t areas_queried = 0;
-  uint32_t areas_complete = 0;
-
-  for (uint32_t i = 0; i < max_areas; ++i)
-  {
-    auto request = std::make_shared<mowgli_interfaces::srv::GetCoverageStatus::Request>();
-    request->area_index = i;
-
-    auto future = client_->async_send_request(request);
-    // Poll future without spinning (avoids executor deadlock)
+    case InternalState::IDLE:
     {
-      auto timeout = std::chrono::seconds(2);
-      auto start = std::chrono::steady_clock::now();
-      bool completed = false;
-      while (rclcpp::ok())
+      // Determine group boundaries for the active segment_type.
+      group_end_idx_exclusive_ = group_end_index(current_waypoint_idx_);
+
+      // Decide blade transition.
+      if (target_blade != blade_currently_enabled_)
       {
-        if (future.wait_for(std::chrono::milliseconds(10)) == std::future_status::ready)
-        {
-          completed = true;
-          break;
-        }
-        if (std::chrono::steady_clock::now() - start > timeout)
-        {
-          break;
-        }
+        setBladeEnabled(target_blade);
+        blade_currently_enabled_ = target_blade;
+        blade_start_time_ = std::chrono::steady_clock::now();
+        state_ = InternalState::WAIT_BLADE;
+      } else {
+        // No transition needed -> dispatch immediately.
+        state_ = (wp.segment_type == CW::SEGMENT_MOWING_BOUSTROPHEDON ||
+                  wp.segment_type == CW::SEGMENT_OUTLINE_WORKING_AREA ||
+                  wp.segment_type == CW::SEGMENT_OUTLINE_OBSTACLE)
+                     ? InternalState::SEND_FTC_GOAL
+                     : InternalState::SEND_NAV_GOAL;
       }
-      if (!completed)
-      {
-        // Service call timed out. This is DIFFERENT from "no more areas";
-        // we must NOT conclude mowing is done. FAIL loudly so the BT can
-        // retry instead of falling through to the dock-return branch.
-        RCLCPP_ERROR(ctx->node->get_logger(),
-                     "GetNextUnmowedArea: get_coverage_status timed out for area %u after 2s — "
-                     "returning FAILURE (BT should retry, not assume mowing complete)",
-                     i);
-        return BT::NodeStatus::FAILURE;
-      }
+      return BT::NodeStatus::RUNNING;
     }
 
-    auto response = future.get();
-    if (!response->success)
+    case InternalState::WAIT_BLADE:
     {
-      // Area index out of range — no more areas to check.
-      // If we haven't queried any area yet, this means map_server has no
-      // areas defined at all — distinct from "all areas mowed".
-      if (areas_queried == 0)
+      // Only wait the spinup delay when turning blade ON (RPM stabilization
+      // before the path begins). Turning blade OFF is immediate — the firmware
+      // can stop the blade at any time and the path doesn't need to wait.
+      if (blade_currently_enabled_)
+      {
+        const auto elapsed = std::chrono::steady_clock::now() - blade_start_time_;
+        if (elapsed < std::chrono::duration<double>(kBladeSpinupDelaySec))
+        {
+          return BT::NodeStatus::RUNNING;
+        }
+      }
+      state_ = (wp.segment_type == CW::SEGMENT_MOWING_BOUSTROPHEDON ||
+                wp.segment_type == CW::SEGMENT_OUTLINE_WORKING_AREA ||
+                wp.segment_type == CW::SEGMENT_OUTLINE_OBSTACLE)
+                   ? InternalState::SEND_FTC_GOAL
+                   : InternalState::SEND_NAV_GOAL;
+      return BT::NodeStatus::RUNNING;
+    }
+
+    case InternalState::SEND_NAV_GOAL:
+    {
+      Nav2Navigate::Goal goal;
+      goal.pose = wp.pose;
+      // Ensure header.frame_id is "map" — planner contract guarantees this
+      // but be explicit for downstream Nav2.
+      if (goal.pose.header.frame_id.empty())
+      {
+        goal.pose.header.frame_id = "map";
+      }
+      nav_handle_.reset();
+      nav_future_ = nav_client_->async_send_goal(goal);
+      RCLCPP_INFO(ctx->node->get_logger(),
+                  "FollowCoveragePlan: NavigateToPose seg=%u idx=%zu pos=(%.2f, %.2f)",
+                  wp.segment_type, current_waypoint_idx_,
+                  goal.pose.pose.position.x, goal.pose.pose.position.y);
+      state_ = InternalState::WAIT_NAV;
+      return BT::NodeStatus::RUNNING;
+    }
+
+    case InternalState::WAIT_NAV:
+    {
+      if (!nav_handle_)
+      {
+        if (nav_future_.wait_for(std::chrono::milliseconds(0)) != std::future_status::ready)
+        {
+          return BT::NodeStatus::RUNNING;
+        }
+        nav_handle_ = nav_future_.get();
+        if (!nav_handle_)
+        {
+          RCLCPP_ERROR(ctx->node->get_logger(),
+                       "FollowCoveragePlan: NavigateToPose goal rejected at idx=%zu",
+                       current_waypoint_idx_);
+          setBladeEnabled(false);
+          blade_currently_enabled_ = false;
+          return BT::NodeStatus::FAILURE;
+        }
+      }
+      auto status = nav_handle_->get_status();
+      if (status == action_msgs::msg::GoalStatus::STATUS_SUCCEEDED)
+      {
+        nav_handle_.reset();
+        // Nav2 segments do NOT trigger a checkpoint write — only completed
+        // mowing/outline groups do (they're the meaningful recovery points).
+        state_ = InternalState::ADVANCE_WAYPOINT;
+        return BT::NodeStatus::RUNNING;
+      }
+      if (status == action_msgs::msg::GoalStatus::STATUS_ABORTED ||
+          status == action_msgs::msg::GoalStatus::STATUS_CANCELED)
       {
         RCLCPP_WARN(ctx->node->get_logger(),
-                    "GetNextUnmowedArea: no mowing areas defined in map_server "
-                    "(first get_coverage_status returned success=false). "
-                    "Record an area via the GUI before starting mowing.");
+                    "FollowCoveragePlan: NavigateToPose aborted/canceled at idx=%zu",
+                    current_waypoint_idx_);
+        nav_handle_.reset();
+        setBladeEnabled(false);
+        blade_currently_enabled_ = false;
+        return BT::NodeStatus::FAILURE;
       }
-      break;
+      return BT::NodeStatus::RUNNING;
     }
 
-    areas_queried++;
-
-    if (response->strips_remaining > 0)
+    case InternalState::SEND_FTC_GOAL:
     {
-      setOutput("area_index", i);
-      ctx->current_area = static_cast<int>(i);
-
+      Nav2FollowPath::Goal goal;
+      goal.path = build_path_segment(current_waypoint_idx_, group_end_idx_exclusive_);
+      goal.controller_id = "FollowCoveragePath";   // FTCController per CLAUDE.md invariant #8
+      goal.goal_checker_id = "coverage_goal_checker";
+      follow_handle_.reset();
+      follow_future_ = follow_client_->async_send_goal(goal);
       RCLCPP_INFO(ctx->node->get_logger(),
-                  "GetNextUnmowedArea: area %u has %u strips remaining (%.1f%% done)",
-                  i,
-                  response->strips_remaining,
-                  response->coverage_percent);
-      return BT::NodeStatus::SUCCESS;
+                  "FollowCoveragePlan: FollowPath seg=%u idx=[%zu,%zu) poses=%zu "
+                  "controller=FollowCoveragePath",
+                  wp.segment_type, current_waypoint_idx_, group_end_idx_exclusive_,
+                  goal.path.poses.size());
+      state_ = InternalState::WAIT_FTC;
+      return BT::NodeStatus::RUNNING;
     }
 
-    areas_complete++;
-    RCLCPP_INFO(ctx->node->get_logger(),
-                "GetNextUnmowedArea: area %u complete (%.1f%%)",
-                i,
-                response->coverage_percent);
+    case InternalState::WAIT_FTC:
+    {
+      if (!follow_handle_)
+      {
+        if (follow_future_.wait_for(std::chrono::milliseconds(0)) != std::future_status::ready)
+        {
+          return BT::NodeStatus::RUNNING;
+        }
+        follow_handle_ = follow_future_.get();
+        if (!follow_handle_)
+        {
+          RCLCPP_ERROR(ctx->node->get_logger(),
+                       "FollowCoveragePlan: FollowPath goal rejected at idx=%zu",
+                       current_waypoint_idx_);
+          setBladeEnabled(false);
+          blade_currently_enabled_ = false;
+          return BT::NodeStatus::FAILURE;
+        }
+      }
+      auto status = follow_handle_->get_status();
+      if (status == action_msgs::msg::GoalStatus::STATUS_SUCCEEDED)
+      {
+        follow_handle_.reset();
+        state_ = InternalState::CHECKPOINT_WRITE;
+        return BT::NodeStatus::RUNNING;
+      }
+      if (status == action_msgs::msg::GoalStatus::STATUS_ABORTED ||
+          status == action_msgs::msg::GoalStatus::STATUS_CANCELED)
+      {
+        RCLCPP_WARN(ctx->node->get_logger(),
+                    "FollowCoveragePlan: FollowPath aborted/canceled at idx=%zu",
+                    current_waypoint_idx_);
+        follow_handle_.reset();
+        setBladeEnabled(false);
+        blade_currently_enabled_ = false;
+        return BT::NodeStatus::FAILURE;
+      }
+      return BT::NodeStatus::RUNNING;
+    }
+
+    case InternalState::CHECKPOINT_WRITE:
+    {
+      // Q1 lock: BT delegates checkpoint writes to the planner via service.
+      // Fire-and-forget — we WARN on failure but do NOT halt the plan.
+      dispatch_checkpoint_write(group_end_idx_exclusive_);
+      state_ = InternalState::ADVANCE_WAYPOINT;
+      return BT::NodeStatus::RUNNING;
+    }
+
+    case InternalState::ADVANCE_WAYPOINT:
+    {
+      current_waypoint_idx_ = group_end_idx_exclusive_;
+      state_ = InternalState::IDLE;
+      return BT::NodeStatus::RUNNING;
+    }
+
+    case InternalState::SEND_BLADE:
+    {
+      // Currently unused — blade transitions go directly via WAIT_BLADE.
+      // Reserved for future SEND_BLADE -> WAIT_BLADE split if we need to
+      // observe the MowerControl future before timing the spinup delay.
+      state_ = InternalState::WAIT_BLADE;
+      return BT::NodeStatus::RUNNING;
+    }
   }
 
-  if (areas_queried == 0)
-  {
-    RCLCPP_WARN(ctx->node->get_logger(),
-                "GetNextUnmowedArea: no areas to mow (none defined)");
-  }
-  else
-  {
-    RCLCPP_INFO(ctx->node->get_logger(),
-                "GetNextUnmowedArea: all %u area(s) complete",
-                areas_complete);
-  }
-  return BT::NodeStatus::FAILURE;
-}
-
-// ===========================================================================
-// OutlineArea — drive the polygon perimeter (offset inward) before strips
-// ===========================================================================
-
-BT::NodeStatus OutlineArea::onStart()
-{
-  auto ctx = config().blackboard->get<std::shared_ptr<BTContext>>("context");
-  auto helper = ctx->helper_node;
-
-  uint32_t area_idx = 0;
-  getInput<uint32_t>("area_index", area_idx);
-
-  if (!outline_client_)
-  {
-    outline_client_ = helper->create_client<mowgli_interfaces::srv::GetOutlinePath>(
-        "/map_server_node/get_outline_path");
-  }
-  if (!outline_client_->wait_for_service(std::chrono::seconds(2)))
-  {
-    RCLCPP_ERROR(ctx->node->get_logger(),
-                 "OutlineArea: get_outline_path service not available");
-    return BT::NodeStatus::FAILURE;
-  }
-
-  auto request = std::make_shared<mowgli_interfaces::srv::GetOutlinePath::Request>();
-  request->area_index = area_idx;
-  request->inset_m = 0.0F;  // 0 = use the recommended default in map_server
-
-  outline_future_ = outline_client_->async_send_request(request).future.share();
-  outline_received_ = false;
-  goal_sent_ = false;
-  follow_handle_.reset();
-
-  RCLCPP_INFO(ctx->node->get_logger(),
-              "OutlineArea: requested outline for area=%u", area_idx);
   return BT::NodeStatus::RUNNING;
 }
 
-BT::NodeStatus OutlineArea::onRunning()
+void FollowCoveragePlan::onHalted()
 {
-  auto ctx = config().blackboard->get<std::shared_ptr<BTContext>>("context");
-
-  // Step 1 — wait for the get_outline_path service response.
-  if (!outline_received_)
-  {
-    if (outline_future_.wait_for(std::chrono::milliseconds(0)) !=
-        std::future_status::ready)
-    {
-      return BT::NodeStatus::RUNNING;
-    }
-    auto resp = outline_future_.get();
-    if (!resp || !resp->success)
-    {
-      RCLCPP_WARN(ctx->node->get_logger(),
-                  "OutlineArea: get_outline_path failed%s%s",
-                  (resp && !resp->error_message.empty()) ? ": " : "",
-                  (resp && !resp->error_message.empty())
-                      ? resp->error_message.c_str()
-                      : "");
-      // Don't fail the whole tree — just skip the outline phase. The strip
-      // loop will still run; the polygon edge stays uncut as before, but
-      // the user gets a warning instead of an aborted run.
-      return BT::NodeStatus::SUCCESS;
-    }
-    if (resp->outline_path.poses.size() < 3)
-    {
-      RCLCPP_WARN(ctx->node->get_logger(),
-                  "OutlineArea: outline path too short (%zu poses), skipping",
-                  resp->outline_path.poses.size());
-      return BT::NodeStatus::SUCCESS;
-    }
-    outline_path_ = resp->outline_path;
-    outline_received_ = true;
-    RCLCPP_INFO(ctx->node->get_logger(),
-                "OutlineArea: outline received, %zu poses, inset=%.2fm",
-                outline_path_.poses.size(),
-                static_cast<double>(resp->effective_inset_m));
-  }
-
-  // Step 2 — enable blade and dispatch FollowPath.
-  if (!goal_sent_)
-  {
-    setBladeEnabled(true);
-    blade_start_time_ = std::chrono::steady_clock::now();
-
-    if (!follow_client_)
-    {
-      follow_client_ = rclcpp_action::create_client<Nav2FollowPath>(
-          ctx->node, "/follow_path");
-    }
-    if (!follow_client_->wait_for_action_server(std::chrono::seconds(5)))
-    {
-      RCLCPP_ERROR(ctx->node->get_logger(),
-                   "OutlineArea: /follow_path action not available");
-      setBladeEnabled(false);
-      return BT::NodeStatus::FAILURE;
-    }
-
-    // Wait for blade spin-up before dispatching the goal — same pattern as
-    // FollowStrip so the blade hits steady-state RPM before contact.
-    auto elapsed = std::chrono::steady_clock::now() - blade_start_time_;
-    if (elapsed < std::chrono::duration<double>(kBladeSpinupDelaySec))
-    {
-      return BT::NodeStatus::RUNNING;
-    }
-
-    Nav2FollowPath::Goal goal;
-    goal.path = outline_path_;
-    goal.controller_id = "FollowCoveragePath";
-    goal.goal_checker_id = "coverage_goal_checker";
-
-    follow_future_ = follow_client_->async_send_goal(goal);
-    goal_sent_ = true;
-
-    RCLCPP_INFO(ctx->node->get_logger(),
-                "OutlineArea: sent %zu-pose outline path to FTCController",
-                outline_path_.poses.size());
-    return BT::NodeStatus::RUNNING;
-  }
-
-  // Step 3 — track the action goal lifecycle (mirrors FollowStrip).
-  if (!follow_handle_)
-  {
-    if (follow_future_.wait_for(std::chrono::milliseconds(0)) !=
-        std::future_status::ready)
-    {
-      return BT::NodeStatus::RUNNING;
-    }
-    follow_handle_ = follow_future_.get();
-    if (!follow_handle_)
-    {
-      RCLCPP_WARN(ctx->node->get_logger(), "OutlineArea: outline goal rejected");
-      setBladeEnabled(false);
-      return BT::NodeStatus::SUCCESS;  // skip outline, continue with strips
-    }
-  }
-
-  auto status = follow_handle_->get_status();
-  if (status == action_msgs::msg::GoalStatus::STATUS_SUCCEEDED)
-  {
-    RCLCPP_INFO(ctx->node->get_logger(), "OutlineArea: outline completed");
-    follow_handle_.reset();
-    setBladeEnabled(false);
-    return BT::NodeStatus::SUCCESS;
-  }
-  if (status == action_msgs::msg::GoalStatus::STATUS_ABORTED ||
-      status == action_msgs::msg::GoalStatus::STATUS_CANCELED)
-  {
-    RCLCPP_WARN(ctx->node->get_logger(),
-                "OutlineArea: outline aborted/canceled — proceeding to strips");
-    follow_handle_.reset();
-    setBladeEnabled(false);
-    return BT::NodeStatus::SUCCESS;  // strips can still run
-  }
-  return BT::NodeStatus::RUNNING;
-}
-
-void OutlineArea::onHalted()
-{
-  if (follow_handle_)
+  // Safety-critical contract (T-08-03 mitigation, regression-tested in
+  // test_coverage_nodes.cpp::OnHaltedDisablesBlade): the blade MUST be
+  // disabled unconditionally and any active sub-action goal MUST be canceled.
+  if (follow_handle_ && follow_client_)
   {
     follow_client_->async_cancel_goal(follow_handle_);
   }
   follow_handle_.reset();
-  setBladeEnabled(false);
+
+  if (nav_handle_ && nav_client_)
+  {
+    nav_client_->async_cancel_goal(nav_handle_);
+  }
+  nav_handle_.reset();
+
+  setBladeEnabled(false);  // ALWAYS — see contract above.
+  blade_currently_enabled_ = false;
+
+  state_ = InternalState::IDLE;
 }
 
-void OutlineArea::setBladeEnabled(bool enabled)
+void FollowCoveragePlan::setBladeEnabled(bool enabled)
 {
   auto ctx = config().blackboard->get<std::shared_ptr<BTContext>>("context");
   if (!blade_client_)
@@ -628,10 +577,14 @@ void OutlineArea::setBladeEnabled(bool enabled)
         "/hardware_bridge/mower_control");
   }
   if (!blade_client_->wait_for_service(std::chrono::milliseconds(200)))
+  {
     return;
+  }
 
   auto req = std::make_shared<mowgli_interfaces::srv::MowerControl::Request>();
   req->mow_enabled = enabled ? 1u : 0u;
+  // Fire-and-forget — firmware is sole safety authority and decides whether
+  // to actually run/stop the blade based on its own gates (CLAUDE.md Safety).
   blade_client_->async_send_request(req);
 }
 

@@ -354,21 +354,21 @@ BT::NodeStatus PreFlightCheck::tick()
   }
 
   // ── 5. Mowing area defined ───────────────────────────────────────────────
-  if (!coverage_client_)
+  // Plan 01-08: switched from /map_server_node/get_coverage_status (deleted
+  // by Plan 01-06) to /map_server_node/get_all_areas. Empty areas list = no
+  // mowing area defined.
+  if (!areas_client_)
   {
-    coverage_client_ =
-        ctx->helper_node->create_client<mowgli_interfaces::srv::GetCoverageStatus>(
-            "/map_server_node/get_coverage_status");
+    areas_client_ =
+        ctx->helper_node->create_client<mowgli_interfaces::srv::GetAllAreas>(
+            "/map_server_node/get_all_areas");
   }
-  if (!coverage_client_->service_is_ready())
+  if (!areas_client_->service_is_ready())
   {
-    failures.emplace_back("coverage-service-unavailable");
-  }
-  else
-  {
-    auto req = std::make_shared<mowgli_interfaces::srv::GetCoverageStatus::Request>();
-    req->area_index = 0;
-    auto future = coverage_client_->async_send_request(req);
+    failures.emplace_back("get_all_areas-service-unavailable");
+  } else {
+    auto req = std::make_shared<mowgli_interfaces::srv::GetAllAreas::Request>();
+    auto future = areas_client_->async_send_request(req);
     auto start = std::chrono::steady_clock::now();
     bool ready = false;
     while (std::chrono::steady_clock::now() - start < std::chrono::seconds(1))
@@ -381,12 +381,23 @@ BT::NodeStatus PreFlightCheck::tick()
     }
     if (!ready)
     {
-      failures.emplace_back("coverage-query-timeout");
-    }
-    else
-    {
+      failures.emplace_back("get_all_areas-query-timeout");
+    } else {
       auto resp = future.get();
-      if (!resp || !resp->success)
+      // Treat any non-navigation polygon as a mowing area.
+      bool has_mowing_area = false;
+      if (resp)
+      {
+        for (const auto& a : resp->areas)
+        {
+          if (!a.is_navigation_area)
+          {
+            has_mowing_area = true;
+            break;
+          }
+        }
+      }
+      if (!has_mowing_area)
       {
         failures.emplace_back("no-mowing-area-defined");
       }

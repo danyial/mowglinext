@@ -19,7 +19,7 @@
 
 #include "behaviortree_cpp/behavior_tree.h"
 #include "mowgli_behavior/bt_context.hpp"
-#include "mowgli_interfaces/srv/get_coverage_status.hpp"
+#include "mowgli_interfaces/srv/get_all_areas.hpp"
 #include "rclcpp/rclcpp.hpp"
 #include "std_srvs/srv/trigger.hpp"
 
@@ -370,7 +370,7 @@ private:
 ///     (implicitly confirms ekf_odom_node is publishing odom→base_footprint
 ///      AND ekf_map_node is publishing map→odom)
 ///   - At least one mowing area is defined in map_server (service call
-///     to /map_server_node/get_coverage_status with area_index=0)
+///     to /map_server_node/get_all_areas)
 ///
 /// Returns FAILURE on any missing condition, with a single-line summary log
 /// so the operator knows exactly which check blocked undocking. Meant to be
@@ -407,7 +407,7 @@ public:
   BT::NodeStatus tick() override;
 
 private:
-  rclcpp::Client<mowgli_interfaces::srv::GetCoverageStatus>::SharedPtr coverage_client_;
+  rclcpp::Client<mowgli_interfaces::srv::GetAllAreas>::SharedPtr areas_client_;
 };
 
 // ---------------------------------------------------------------------------

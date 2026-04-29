@@ -472,9 +472,10 @@ int main(int argc, char** argv)
   // Use MultiThreadedExecutor so both the main BT node and the helper
   // node (used for service clients from BT tick callbacks) get spun.
   // Without spinning the helper, async service responses never reach
-  // the future, so GetCoverageStatus / GetNextStrip / etc. all time out
-  // — symptom: `GetNextUnmowedArea: all areas complete` immediately on
-  // start because the service future is never ready.
+  // the future, so service calls (e.g. GetAllAreas in PreFlightCheck)
+  // all time out — historical symptom before the helper node existed:
+  // PreFlightCheck failed immediately on start because the future was
+  // never delivered.
   rclcpp::executors::MultiThreadedExecutor executor;
   executor.add_node(node);
   executor.add_node(node->context()->helper_node);

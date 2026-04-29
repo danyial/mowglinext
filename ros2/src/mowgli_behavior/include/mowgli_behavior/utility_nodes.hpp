@@ -99,9 +99,9 @@ private:
 /// warning — the intent is to let the robot start/resume mowing at degraded
 /// precision rather than freeze indefinitely at a partly-obstructed site.
 ///
-/// Typical use: insert after BackUp (undock) and before the first
-/// TransitToStrip, to give the F9P a few seconds out from under the dock's
-/// metal canopy to re-acquire RTK before navigation starts.
+/// Typical use: insert after BackUp (undock) and before FollowCoveragePlan
+/// dispatches its first transit, to give the F9P a few seconds out from under
+/// the dock's metal canopy to re-acquire RTK before navigation starts.
 ///
 /// Input ports:
 ///   timeout_sec    (double, default 20.0) – max wait before proceeding.

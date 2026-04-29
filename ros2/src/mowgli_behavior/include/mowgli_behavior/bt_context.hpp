@@ -19,15 +19,13 @@
 #include <cstdint>
 #include <memory>
 #include <mutex>
-#include <optional>
 #include <string>
 #include <vector>
 
-#include "geometry_msgs/msg/point32.hpp"
+#include "mowgli_interfaces/msg/coverage_waypoint.hpp"
 #include "mowgli_interfaces/msg/emergency.hpp"
 #include "mowgli_interfaces/msg/power.hpp"
 #include "mowgli_interfaces/msg/status.hpp"
-#include "nav_msgs/msg/path.hpp"
 #include "rclcpp/rclcpp.hpp"
 #include "tf2_ros/buffer.hpp"
 #include "tf2_ros/transform_listener.hpp"
@@ -157,48 +155,20 @@ struct BTContext
   double dock_yaw{0.0};
 
   // -----------------------------------------------------------------------
-  // Legacy coverage path components (retained for potential future use).
+  // Coverage plan state (Plan 01-08).
+  //
+  // Single-shot pull-down model: PlanCoverageGoal calls
+  // /coverage_planner_node/plan_coverage once at AUTONOMOUS branch entry
+  // (D-04) and writes the resulting CoverageWaypoint[] here. FollowCoveragePlan
+  // consumes the plan sequentially and delegates per-area resume state to
+  // the planner via /coverage_planner_node/write_checkpoint
+  // (RESEARCH §10 Q1 lock — BT NEVER touches the filesystem).
+  //
+  // Empty when no plan is loaded. Cleared by ClearCommand at session end.
   // -----------------------------------------------------------------------
 
-  struct Swath
-  {
-    geometry_msgs::msg::Point32 start;
-    geometry_msgs::msg::Point32 end;
-  };
-
-  struct CoveragePlan
-  {
-    std::vector<Swath> swaths;
-    std::vector<nav_msgs::msg::Path> turns;  // N-1 turns for N swaths
-    nav_msgs::msg::Path full_path;  // Full F2C discretized path (swaths + turns)
-  };
-
-  std::optional<CoveragePlan> coverage_plan;
-
-  /// Already-traveled waypoints from the current plan (legacy).
-  std::vector<geometry_msgs::msg::Point> visited_waypoints;
-
-  // -----------------------------------------------------------------------
-  // Cell-based strip coverage state
-  // -----------------------------------------------------------------------
-
-  /// Current strip path to mow (set by GetNextStrip, consumed by FollowStrip).
-  nav_msgs::msg::Path current_strip_path;
-
-  /// Transit goal to reach strip start (set by GetNextStrip, consumed by TransitToStrip).
-  geometry_msgs::msg::PoseStamped current_transit_goal;
-
-  /// Latest coverage percentage.
-  float coverage_percent{0.0f};
-
-  /// Progress tracking across charge cycles.
-  size_t next_swath_index{0};
-
-  /// Coverage progress (read by PublishHighLevelStatus).
-  int current_area{-1};
-  int total_swaths{0};
-  int completed_swaths{0};
-  int skipped_swaths{0};
+  /// Coverage plan written by PlanCoverageGoal, consumed by FollowCoveragePlan.
+  std::vector<mowgli_interfaces::msg::CoverageWaypoint> coverage_plan;
 
   // -----------------------------------------------------------------------
   // TF buffer (shared across all BT nodes)

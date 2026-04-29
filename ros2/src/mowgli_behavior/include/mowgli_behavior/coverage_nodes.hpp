@@ -18,15 +18,16 @@
 #include <chrono>
 #include <memory>
 #include <string>
+#include <vector>
 
 #include "behaviortree_cpp/behavior_tree.h"
 #include "behaviortree_cpp/bt_factory.h"
 #include "geometry_msgs/msg/pose_stamped.hpp"
 #include "mowgli_behavior/bt_context.hpp"
-#include "mowgli_interfaces/srv/get_coverage_status.hpp"
-#include "mowgli_interfaces/srv/get_next_strip.hpp"
-#include "mowgli_interfaces/srv/get_outline_path.hpp"
+#include "mowgli_interfaces/action/plan_coverage.hpp"
+#include "mowgli_interfaces/msg/coverage_waypoint.hpp"
 #include "mowgli_interfaces/srv/mower_control.hpp"
+#include "mowgli_interfaces/srv/write_checkpoint.hpp"
 #include "nav2_msgs/action/follow_path.hpp"
 #include "nav2_msgs/action/navigate_to_pose.hpp"
 #include "nav_msgs/msg/path.hpp"
@@ -37,20 +38,43 @@ namespace mowgli_behavior
 {
 
 // ---------------------------------------------------------------------------
-// GetNextStrip — fetch next unmowed strip from map_server
+// should_blade_enable — pure helper, blade ON iff the segment_type is one of
+// the three mowing segment types per CLAUDE.md "What NOT to Do" + plan 01-08
+// task 2 safety contract. Free function so unit tests can reach it without
+// spinning an action server. T-08-01 mitigation lives here.
 // ---------------------------------------------------------------------------
+inline bool should_blade_enable(const mowgli_interfaces::msg::CoverageWaypoint& wp)
+{
+  using CW = mowgli_interfaces::msg::CoverageWaypoint;
+  return wp.segment_type == CW::SEGMENT_MOWING_BOUSTROPHEDON ||
+         wp.segment_type == CW::SEGMENT_OUTLINE_WORKING_AREA ||
+         wp.segment_type == CW::SEGMENT_OUTLINE_OBSTACLE;
+}
 
-class GetNextStrip : public BT::StatefulActionNode
+// ---------------------------------------------------------------------------
+// PlanCoverageGoal — sends one PlanCoverage.action goal to coverage_planner
+// at AUTONOMOUS branch entry (D-04). Writes the resulting plan to
+// BTContext::coverage_plan; FollowCoveragePlan consumes it sequentially.
+//
+// Returns:
+//   SUCCESS  — plan received and stored in ctx->coverage_plan.
+//   FAILURE  — action server unavailable, goal rejected, planner returned
+//              success=false, or the plan was empty.
+// ---------------------------------------------------------------------------
+class PlanCoverageGoal : public BT::StatefulActionNode
 {
 public:
-  GetNextStrip(const std::string& name, const BT::NodeConfig& config)
+  using Action = mowgli_interfaces::action::PlanCoverage;
+  using GoalHandle = rclcpp_action::ClientGoalHandle<Action>;
+
+  PlanCoverageGoal(const std::string& name, const BT::NodeConfig& config)
       : BT::StatefulActionNode(name, config)
   {
   }
 
   static BT::PortsList providedPorts()
   {
-    return {BT::InputPort<uint32_t>("area_index", 0u, "Mowing area index")};
+    return {};
   }
 
   BT::NodeStatus onStart() override;
@@ -58,20 +82,62 @@ public:
   void onHalted() override;
 
 private:
-  rclcpp::Client<mowgli_interfaces::srv::GetNextStrip>::SharedPtr client_;
+  rclcpp_action::Client<Action>::SharedPtr action_client_;
+  std::shared_future<GoalHandle::SharedPtr> goal_future_;
+  GoalHandle::SharedPtr goal_handle_;
+  std::shared_future<GoalHandle::WrappedResult> result_future_;
+  bool result_requested_ = false;
 };
 
 // ---------------------------------------------------------------------------
-// FollowStrip — follow a strip path with FTCController, blade ON
+// FollowCoveragePlan — consumes BTContext::coverage_plan sequentially.
+//
+// Per waypoint segment_type (per Plan 01-08 D-03 dispatch table):
+//   UNDOCK / TRANSIT / DOCK_APPROACH / DOCKING / RETURN_TO_DOCK
+//     -> nav2_msgs/action/NavigateToPose, blade OFF
+//   OUTLINE_WORKING_AREA / OUTLINE_OBSTACLE / MOWING_BOUSTROPHEDON
+//     -> nav2_msgs/action/FollowPath with controller_id="FollowCoveragePath"
+//        (FTCController, <10 mm tracking error), blade ON. Consecutive same-
+//        segment-type vertices are collapsed into one FollowPath call:
+//          - MOWING_BOUSTROPHEDON: pairs of 2 (one swath = one FollowPath).
+//          - OUTLINE_*: a contiguous run of same-segment vertices = one
+//            closed-loop FollowPath.
+//
+// After a successful MOWING_BOUSTROPHEDON pair or OUTLINE_* run, the node
+// calls /coverage_planner_node/write_checkpoint (Plan 01-05's
+// WriteCheckpoint.srv) — the BT NEVER touches the filesystem (RESEARCH §10
+// Q1 lock).
+//
+// Safety-critical contract (T-08-03 mitigation, regression-tested in
+// test_coverage_nodes.cpp): onHalted() MUST disable the blade unconditionally
+// AND cancel any active sub-action goal. The firmware is the sole safety
+// authority and will refuse the blade command when its own gates fire, but
+// this software-side invariant is defense in depth.
 // ---------------------------------------------------------------------------
-
-class FollowStrip : public BT::StatefulActionNode
+class FollowCoveragePlan : public BT::StatefulActionNode
 {
 public:
   using Nav2FollowPath = nav2_msgs::action::FollowPath;
+  using Nav2Navigate = nav2_msgs::action::NavigateToPose;
   using FollowGoalHandle = rclcpp_action::ClientGoalHandle<Nav2FollowPath>;
+  using NavGoalHandle = rclcpp_action::ClientGoalHandle<Nav2Navigate>;
+  using CoverageWaypoint = mowgli_interfaces::msg::CoverageWaypoint;
 
-  FollowStrip(const std::string& name, const BT::NodeConfig& config)
+  // Internal state machine per Plan 01-08 RESEARCH §6.3.
+  enum class InternalState
+  {
+    IDLE,
+    SEND_BLADE,
+    WAIT_BLADE,
+    SEND_NAV_GOAL,
+    WAIT_NAV,
+    SEND_FTC_GOAL,
+    WAIT_FTC,
+    CHECKPOINT_WRITE,
+    ADVANCE_WAYPOINT
+  };
+
+  FollowCoveragePlan(const std::string& name, const BT::NodeConfig& config)
       : BT::StatefulActionNode(name, config)
   {
   }
@@ -86,125 +152,53 @@ public:
   void onHalted() override;
 
 private:
+  /// Fire-and-forget MowerControl (firmware is sole safety authority).
   void setBladeEnabled(bool enabled);
 
+  /// Determine the closing index of a same-segment-type group starting at
+  /// `start_idx`. For MOWING_BOUSTROPHEDON, group exactly two waypoints
+  /// (swath start + end). For OUTLINE_*, group all consecutive vertices
+  /// with the same segment_type. For Nav2-dispatched segments, group of 1.
+  size_t group_end_index(size_t start_idx) const;
+
+  /// Build a nav_msgs/Path for FTCController from coverage_plan_ entries
+  /// in the half-open range [start_idx, end_idx_exclusive).
+  nav_msgs::msg::Path build_path_segment(size_t start_idx, size_t end_idx_exclusive) const;
+
+  /// Send a Checkpoint.srv request reflecting the just-completed group at
+  /// `completed_end_idx_exclusive - 1`. Fire-and-forget on the future side
+  /// (we WARN on failure; the next successful checkpoint is the recovery
+  /// point — Q1 lock).
+  void dispatch_checkpoint_write(size_t completed_end_idx_exclusive);
+
+  // Sub-action / service clients — created lazily on first use.
   rclcpp_action::Client<Nav2FollowPath>::SharedPtr follow_client_;
+  rclcpp_action::Client<Nav2Navigate>::SharedPtr nav_client_;
   rclcpp::Client<mowgli_interfaces::srv::MowerControl>::SharedPtr blade_client_;
+  rclcpp::Client<mowgli_interfaces::srv::WriteCheckpoint>::SharedPtr checkpoint_client_;
+
+  // Plan state — copied from blackboard in onStart() (snapshot semantics).
+  std::vector<CoverageWaypoint> coverage_plan_;
+  size_t current_waypoint_idx_{0};
+  size_t group_end_idx_exclusive_{0};   // exclusive end of the active group
+
+  // Active goal tracking.
   std::shared_future<FollowGoalHandle::SharedPtr> follow_future_;
   FollowGoalHandle::SharedPtr follow_handle_;
-
-  // Blade spinup delay — wait before sending path goal
-  static constexpr double kBladeSpinupDelaySec = 1.5;
-  std::chrono::steady_clock::time_point blade_start_time_;
-  bool goal_sent_ = false;
-};
-
-// ---------------------------------------------------------------------------
-// TransitToStrip — navigate to strip start using Nav2 navigate_to_pose
-// ---------------------------------------------------------------------------
-
-class TransitToStrip : public BT::StatefulActionNode
-{
-public:
-  using Nav2Navigate = nav2_msgs::action::NavigateToPose;
-  using NavGoalHandle = rclcpp_action::ClientGoalHandle<Nav2Navigate>;
-
-  TransitToStrip(const std::string& name, const BT::NodeConfig& config)
-      : BT::StatefulActionNode(name, config)
-  {
-  }
-
-  static BT::PortsList providedPorts()
-  {
-    return {};
-  }
-
-  BT::NodeStatus onStart() override;
-  BT::NodeStatus onRunning() override;
-  void onHalted() override;
-
-private:
-  rclcpp_action::Client<Nav2Navigate>::SharedPtr nav_client_;
   std::shared_future<NavGoalHandle::SharedPtr> nav_future_;
   NavGoalHandle::SharedPtr nav_handle_;
-};
 
-// ---------------------------------------------------------------------------
-// OutlineArea — drive the polygon perimeter (offset inward by mower radius)
-// before strip coverage starts. Implements #50 phase 2 — without this, the
-// outer boundary band of every polygon stays uncut because strip generation
-// shrinks the polygon by strip_boundary_margin_m before scanning.
-//
-// Calls /map_server_node/get_outline_path to get a closed-loop nav_msgs/Path
-// along the offset polygon, enables the blade, then sends the path through
-// the FollowCoveragePath controller (FTC) — same controller the strip loop
-// uses, so all the existing tracking-error / collision-monitor work applies.
-// ---------------------------------------------------------------------------
-
-class OutlineArea : public BT::StatefulActionNode
-{
-public:
-  using Nav2FollowPath = nav2_msgs::action::FollowPath;
-  using FollowGoalHandle = rclcpp_action::ClientGoalHandle<Nav2FollowPath>;
-
-  OutlineArea(const std::string& name, const BT::NodeConfig& config)
-      : BT::StatefulActionNode(name, config)
-  {
-  }
-
-  static BT::PortsList providedPorts()
-  {
-    return {BT::InputPort<uint32_t>("area_index", 0u, "Mowing area index")};
-  }
-
-  BT::NodeStatus onStart() override;
-  BT::NodeStatus onRunning() override;
-  void onHalted() override;
-
-private:
-  void setBladeEnabled(bool enabled);
-
-  rclcpp::Client<mowgli_interfaces::srv::GetOutlinePath>::SharedPtr outline_client_;
-  rclcpp_action::Client<Nav2FollowPath>::SharedPtr follow_client_;
-  rclcpp::Client<mowgli_interfaces::srv::MowerControl>::SharedPtr blade_client_;
-
-  // Service-call state for /get_outline_path
-  std::shared_future<mowgli_interfaces::srv::GetOutlinePath::Response::SharedPtr> outline_future_;
-  bool outline_received_ = false;
-  nav_msgs::msg::Path outline_path_;
-
-  // FollowPath action state — mirrors FollowStrip
-  std::shared_future<FollowGoalHandle::SharedPtr> follow_future_;
-  FollowGoalHandle::SharedPtr follow_handle_;
-  bool goal_sent_ = false;
-  std::chrono::steady_clock::time_point blade_start_time_;
+  // Blade state machine.
   static constexpr double kBladeSpinupDelaySec = 1.5;
-};
+  std::chrono::steady_clock::time_point blade_start_time_;
+  bool blade_currently_enabled_ = false;
 
-// ---------------------------------------------------------------------------
-// GetNextUnmowedArea — find next area with remaining strips
-// ---------------------------------------------------------------------------
+  InternalState state_{InternalState::IDLE};
 
-class GetNextUnmowedArea : public BT::SyncActionNode
-{
-public:
-  GetNextUnmowedArea(const std::string& name, const BT::NodeConfig& config)
-      : BT::SyncActionNode(name, config)
-  {
-  }
-
-  static BT::PortsList providedPorts()
-  {
-    return {
-        BT::InputPort<uint32_t>("max_areas", 20u, "Maximum number of areas to check"),
-        BT::OutputPort<uint32_t>("area_index", "Index of the next unmowed area"),
-    };
-  }
-
-  BT::NodeStatus tick() override;
-
-private:
-  rclcpp::Client<mowgli_interfaces::srv::GetCoverageStatus>::SharedPtr client_;
+  // Checkpoint pending future (we don't block, we WARN on failure).
+  std::shared_future<mowgli_interfaces::srv::WriteCheckpoint::Response::SharedPtr>
+      checkpoint_future_;
+  bool checkpoint_in_flight_ = false;
 };
 
 }  // namespace mowgli_behavior

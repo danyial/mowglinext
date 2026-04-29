@@ -55,12 +55,16 @@ BT::NodeStatus PublishHighLevelStatus::tick()
   msg.state = state_res.value();
   msg.state_name = name_res.value();
   msg.sub_state_name = "";
-  msg.current_area = static_cast<int16_t>(ctx->current_area);
+  // Coverage progress fields are no longer maintained inside BTContext
+  // (Plan 01-08 — strip-by-strip state went away with the new single-shot
+  // PlanCoverageGoal + FollowCoveragePlan scheme). Future enhancement:
+  // expose plan progress via PlanCoverage feedback / a dedicated topic.
+  msg.current_area = -1;
   msg.current_path = -1;
-  msg.current_path_index = static_cast<int16_t>(ctx->coverage_percent);
-  msg.total_swaths = static_cast<int16_t>(ctx->total_swaths);
-  msg.completed_swaths = static_cast<int16_t>(ctx->completed_swaths);
-  msg.skipped_swaths = static_cast<int16_t>(ctx->skipped_swaths);
+  msg.current_path_index = -1;
+  msg.total_swaths = 0;
+  msg.completed_swaths = 0;
+  msg.skipped_swaths = 0;
   msg.gps_quality_percent = ctx->gps_quality;
   msg.battery_percent = ctx->battery_percent;
   msg.is_charging = ctx->latest_power.charger_enabled;
@@ -106,20 +110,6 @@ BT::NodeStatus ClearCommand::tick()
   // Per-session flags reset here so the next session's seeding nodes
   // actually run instead of short-circuiting on stale state.
   ctx->yaw_seeded_this_session = false;
-  return BT::NodeStatus::SUCCESS;
-}
-
-// ---------------------------------------------------------------------------
-// IncrementSkippedSwaths
-// ---------------------------------------------------------------------------
-
-BT::NodeStatus IncrementSkippedSwaths::tick()
-{
-  auto ctx = config().blackboard->get<std::shared_ptr<BTContext>>("context");
-  ctx->skipped_swaths++;
-  RCLCPP_WARN(ctx->node->get_logger(),
-              "IncrementSkippedSwaths: skipped %d strips (unreachable)",
-              ctx->skipped_swaths);
   return BT::NodeStatus::SUCCESS;
 }
 

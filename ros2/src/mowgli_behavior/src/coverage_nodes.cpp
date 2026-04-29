@@ -16,6 +16,7 @@
 #include "mowgli_behavior/coverage_nodes.hpp"
 
 #include <chrono>
+#include <limits>
 
 #include "action_msgs/msg/goal_status.hpp"
 
@@ -277,9 +278,21 @@ nav_msgs::msg::Path FollowCoveragePlan::build_path_segment(size_t start_idx,
 void FollowCoveragePlan::dispatch_checkpoint_write(size_t completed_end_idx_exclusive)
 {
   using CW = mowgli_interfaces::msg::CoverageWaypoint;
+  constexpr std::uint32_t kNoArea = std::numeric_limits<std::uint32_t>::max();
   auto ctx = config().blackboard->get<std::shared_ptr<BTContext>>("context");
 
-  if (completed_end_idx_exclusive == 0 || completed_end_idx_exclusive > coverage_plan_.size())
+  if (completed_end_idx_exclusive == 0 ||
+      completed_end_idx_exclusive > coverage_plan_.size())
+  {
+    return;
+  }
+
+  const auto& last_wp = coverage_plan_[completed_end_idx_exclusive - 1];
+
+  // Skip non-area segments (UNDOCK / RETURN_TO_DOCK / DOCK_APPROACH /
+  // DOCKING / start-pose TRANSIT bridge). They carry no canonical
+  // area_index, so there's no canonical .kv key to write.
+  if (last_wp.area_index == kNoArea)
   {
     return;
   }
@@ -293,28 +306,30 @@ void FollowCoveragePlan::dispatch_checkpoint_write(size_t completed_end_idx_excl
   if (!checkpoint_client_->wait_for_service(std::chrono::milliseconds(200)))
   {
     RCLCPP_WARN(ctx->node->get_logger(),
-                "FollowCoveragePlan: WriteCheckpoint service unavailable, skipping (next "
-                "successful checkpoint is the recovery point)");
+                "FollowCoveragePlan: WriteCheckpoint service unavailable, "
+                "skipping (next successful checkpoint is the recovery point)");
     return;
   }
 
-  // Build a Checkpoint reflecting the just-completed segment. The planner
-  // owns filesystem I/O — we hand it a Checkpoint message and it writes the
-  // <areas_dir>/coverage_<area_index>.kv file atomically (Plan 01-05).
-  const auto& last_wp = coverage_plan_[completed_end_idx_exclusive - 1];
-
+  // Build the Checkpoint. The planner owns the canonical per-area key
+  // (area_index) — we hand it the canonical key the PlanBuilder stamped
+  // on this waypoint (Plan 01-10), NOT sequence_id.
   auto req = std::make_shared<mowgli_interfaces::srv::WriteCheckpoint::Request>();
-  req->checkpoint.area_index = last_wp.sequence_id;  // best-effort, planner owns the canonical key
+  req->checkpoint.area_index = last_wp.area_index;  // R-9 / R-11 fix
   req->checkpoint.current_outline_index = 0;
-  req->checkpoint.current_swath_index = static_cast<uint32_t>(last_wp.sequence_id);
+  req->checkpoint.current_swath_index =
+      static_cast<uint32_t>(completed_end_idx_exclusive - 1);
   req->checkpoint.swath_direction =
       mowgli_interfaces::msg::Checkpoint::SWATH_DIRECTION_FORWARD;
-  req->checkpoint.last_completed_swath_index = static_cast<uint32_t>(last_wp.sequence_id);
-  req->checkpoint.next_open_swath_index = static_cast<uint32_t>(last_wp.sequence_id) + 1u;
-  req->checkpoint.last_mow_angle_deg = 0.0;  // Planner derives this from its own state.
+  req->checkpoint.last_completed_swath_index =
+      static_cast<uint32_t>(completed_end_idx_exclusive - 1);
+  req->checkpoint.next_open_swath_index =
+      static_cast<uint32_t>(completed_end_idx_exclusive);
+  // R-9 fix: persist the angle the planner actually used. PlanCoverageGoal
+  // captured this from PlanMetadata.mow_angle_used_deg into BTContext.
+  req->checkpoint.last_mow_angle_deg = ctx->last_mow_angle_used_deg;
   req->checkpoint.last_swath_endpoint = last_wp.pose.pose;
 
-  // Tag for log/diagnostic clarity.
   if (last_wp.segment_type == CW::SEGMENT_OUTLINE_WORKING_AREA ||
       last_wp.segment_type == CW::SEGMENT_OUTLINE_OBSTACLE)
   {
@@ -328,8 +343,10 @@ void FollowCoveragePlan::dispatch_checkpoint_write(size_t completed_end_idx_excl
   checkpoint_client_->async_send_request(req);
 
   RCLCPP_DEBUG(ctx->node->get_logger(),
-               "FollowCoveragePlan: dispatched checkpoint after waypoint %zu",
-               completed_end_idx_exclusive - 1);
+               "FollowCoveragePlan: dispatched checkpoint after waypoint %zu "
+               "(area_index=%u, mow_angle_deg=%.2f)",
+               completed_end_idx_exclusive - 1, last_wp.area_index,
+               ctx->last_mow_angle_used_deg);
 }
 
 BT::NodeStatus FollowCoveragePlan::onRunning()

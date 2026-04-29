@@ -46,6 +46,39 @@ mowgli:
     tool_width: 0.18           # effective cut width (2 × blade_radius)
 
     # -----------------------------------------------------------------
+    # Robot footprint geometry (used by coverage_planner_node, Phase 1)
+    # Measured at hardware bench - caliper from drive axle centerline.
+    # Methodology: place robot on flat surface; measure with caliper or
+    # baseline tape:
+    #   robot_length        = bumper-to-bumper distance, front-to-back
+    #   robot_width         = chassis width at the widest point
+    #   drive_axis_x_offset = drive-axle distance from chassis center, X
+    #                         (negative = axle behind chassis center;
+    #                          YardForce 500 has axle at the rear, so
+    #                          dx is approximately -0.20)
+    #   drive_axis_y_offset = lateral axle offset, normally 0 for
+    #                         symmetric chassis
+    #   blade_x_offset      = blade-disc center distance from chassis
+    #                         center, X (YardForce 500: blade on front
+    #                         half, approximately +0.25)
+    #   blade_y_offset      = lateral blade offset (normally 0)
+    #   tool_width          = effective blade cut width
+    #
+    # IMPORTANT (Architecture Invariant #15, see CLAUDE.md):
+    # robot_width here MUST match collision_monitor.robot_width in
+    # nav2_params.yaml. There is no automated sync - change both files
+    # in the same commit.
+    # -----------------------------------------------------------------
+    robot_geometry:
+      robot_length: 0.60
+      robot_width: 0.40
+      drive_axis_x_offset: -0.20
+      drive_axis_y_offset: 0.0
+      blade_x_offset: 0.25
+      blade_y_offset: 0.0
+      tool_width: 0.18
+
+    # -----------------------------------------------------------------
     # Lidar mount position / orientation (relative to base_link)
     # -----------------------------------------------------------------
     lidar_x: 0.38              # forward offset from wheel axis (m)

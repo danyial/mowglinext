@@ -3,25 +3,25 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: unknown
-stopped_at: Completed 01-07
-last_updated: "2026-04-29T07:38:32Z"
+stopped_at: Completed 01-08
+last_updated: "2026-04-29T08:26:33.034Z"
 progress:
   total_phases: 1
   completed_phases: 0
   total_plans: 9
-  completed_plans: 7
-  percent: 78
+  completed_plans: 8
+  percent: 89
 ---
 
 # Project state
 
 ## Current phase
 
-1 — Coverage Planner Rewrite (Waves 1-4 partially complete — 7/9 plans done; 01-08 next)
+1 — Coverage Planner Rewrite (Waves 1-4 complete — 8/9 plans done; 01-09 next)
 
 ## Current Plan
 
-07 — coverage planner core (COMPLETE — committed `48447625`, `bc42d57f`, `cc818f3e`, `78ac2d66`; SUMMARY at `.planning/phases/01-coverage-planner-rewrite/01-07-SUMMARY.md`)
+08 — BT integration (COMPLETE — committed `70543ec9`, `4b213d3a`, `698cbbd5`; SUMMARY at `.planning/phases/01-coverage-planner-rewrite/01-08-SUMMARY.md`)
 
 ## Total Plans
 
@@ -29,19 +29,19 @@ progress:
 
 ## Resume point
 
-- **Last completed step:** Plan 01-07 (coverage planner core) executed via `/gsd-execute-phase 1 --auto` (sequential mode). SUMMARY committed.
-- **Next step:** Wave 4 — 01-08 (BT integration — repairs mowgli_behavior by replacing the 5-class coverage_nodes scheme with PlanCoverageGoal + FollowCoveragePlan). 01-09 (E2E sim + Pi5 hardware smoke) follows.
+- **Last completed step:** Plan 01-08 (BT integration) executed via `/gsd-execute-phase 1 --auto` (sequential mode). SUMMARY committed. mowgli_behavior build break healed.
+- **Next step:** Wave 5 — 01-09 (E2E sim + Pi5 hardware smoke — operator-gated checkpoint).
 - **Auto-chain flag persisted:** yes (`workflow._auto_chain_active=true` in `.planning/config.json`)
 - **Wave 1 plans:** 01-01 ✅ COMPLETE, 01-03 ✅ COMPLETE
 - **Wave 2 plans:** 01-02 ✅ COMPLETE, 01-04 ✅ COMPLETE
 - **Wave 3 plans:** 01-05 ✅ COMPLETE, 01-06 ✅ COMPLETE
-- **Wave 4 plans:** 01-07 ✅ COMPLETE, 01-08 (BT integration — repairs mowgli_behavior)
+- **Wave 4 plans:** 01-07 ✅ COMPLETE, 01-08 ✅ COMPLETE
 - **Wave 5 plans:** 01-09 (E2E sim + Pi5 hardware smoke — operator-gated checkpoint)
 
 ## Last session
 
-- **Last session:** 2026-04-29T07:38:32Z
-- **Stopped at:** Completed 01-07
+- **Last session:** 2026-04-29T08:25:55.904Z
+- **Stopped at:** Completed 01-08
 - **Resume file:** None
 - **Blockers:** None
 
@@ -56,6 +56,7 @@ progress:
 | 01    | 05   | 8min     | 2     | 11    |
 | 01    | 06   | 25min    | 2     | 10    |
 | 01    | 07   | 20min    | 2     | 22    |
+| 01    | 08   | 34min    | 2     | 13    |
 
 ## Active branch
 
@@ -112,3 +113,7 @@ These were locked in chat on 2026-04-28 before `/gsd-spec-phase` started — the
 | 2026-04-29 | Plan 01-07: AC-3 plan-size ceiling raised 200 -> 400 (Rule 1 deviation) | SPEC AC-3 is mathematically inconsistent: 22.36 m / 0.13 m = 172 swaths × 2 endpoints = ~344 waypoints, exceeds the 200 ceiling regardless of implementation. Test now guards the sparse-plan invariant (>=50, <=400) which still catches dense pixel-densification regressions. |
 | 2026-04-29 | Plan 01-07: Validator order in pre-geometry pipeline is locked (InputSanity must come first) | InputSanityValidator catches out-of-range mow_angle_offset_deg before NoAreas mis-routes ERROR_INTERNAL to ERROR_NO_AREAS. Tests rely on this order. |
 | 2026-04-29 | Plan 01-07: OutlineGenerator detects flipped polygons via shoelace winding sign | offset_polygon_inward returns 4 points even when inset overshoots and produces an inverted polygon; sign-flip path treats the result as collapsed (warning for working-area, ERROR_OBSTACLE_OFFSET_FAILED for obstacles). Prevents emitting outline waypoints on a self-intersecting path. |
+| 2026-04-29 | Plan 01-08: 5 legacy BT coverage nodes deleted, replaced with PlanCoverageGoal + FollowCoveragePlan (D-03 monolithic dispatch realised) | Single-shot plan generation at AUTONOMOUS branch entry; per-segment dispatch table embedded in FollowCoveragePlan; checkpoint writes delegated to /coverage_planner_node/write_checkpoint (Q1 lock). |
+| 2026-04-29 | Plan 01-08: setBladeEnabled changed from private to virtual+protected for unit-test override | Same-process Cyclone DDS service round-trips proved flaky in single-process gtest setups; the in-process software contract (onHalted invokes setBladeEnabled(false)) is what the test asserts; the DDS edge is exercised by Plan 01-09 hardware/sim test. |
+| 2026-04-29 | Plan 01-08: PreFlightCheck migrated from /map_server_node/get_coverage_status (deleted by Plan 01-06) to /map_server_node/get_all_areas | Treats any non-navigation polygon as a valid mowing area. Cleaner than the area_index=0 hack the deleted service required. |
+| 2026-04-29 | Plan 01-08: IncrementSkippedSwaths node + BTContext::skipped_swaths field deleted entirely | Only consumer was the deleted SkipStrip subtree of the legacy AreaLoop; HighLevelStatus's swath-progress fields zeroed until plan-level progress is wired via PlanCoverage feedback in a future plan. |

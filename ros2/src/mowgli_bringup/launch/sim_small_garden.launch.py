@@ -145,6 +145,20 @@ def generate_launch_description() -> LaunchDescription:
     )
 
     # ------------------------------------------------------------------
+    # 4b. Coverage planner (Phase 1 rewrite)
+    # ------------------------------------------------------------------
+    coverage_planner_node = Node(
+        package="mowgli_coverage_planner",
+        executable="coverage_planner_node",
+        name="coverage_planner_node",
+        output="screen",
+        parameters=[
+            map_params,
+            {"use_sim_time": True},
+        ],
+    )
+
+    # ------------------------------------------------------------------
     # 5. Diagnostics
     # ------------------------------------------------------------------
     diagnostics_node = Node(
@@ -250,6 +264,7 @@ def generate_launch_description() -> LaunchDescription:
             # Individual nodes
             behavior_tree_node,
             map_server_node,
+            coverage_planner_node,
             obstacle_tracker_node,
             diagnostics_node,
             foxglove_bridge_node,

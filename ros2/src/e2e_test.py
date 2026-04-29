@@ -45,6 +45,7 @@ from enum import Enum
 from typing import Optional
 
 import rclpy
+from rclpy.action import ActionClient
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy
 
@@ -52,8 +53,9 @@ from geometry_msgs.msg import PoseStamped, PoseWithCovarianceStamped, Twist
 from nav_msgs.msg import Path, OccupancyGrid, Odometry
 from std_msgs.msg import Bool, String
 from sensor_msgs.msg import LaserScan
+from mowgli_interfaces.action import PlanCoverage
+from mowgli_interfaces.msg import CoverageWaypoint, HighLevelStatus
 from mowgli_interfaces.srv import HighLevelControl, EmergencyStop
-from mowgli_interfaces.msg import HighLevelStatus
 
 
 class TestPhase(Enum):
@@ -218,6 +220,19 @@ class E2ETestNode(Node):
             EmergencyStop,
             "/hardware_bridge/emergency_stop",
         )
+
+        # Phase 1 coverage planner: action client for /coverage_planner_node/plan_coverage.
+        # The BT (PlanCoverageGoal node) drives this in production; this client is a
+        # parallel probe so the e2e test can independently assert (a) the action
+        # endpoint is live, (b) the planner returns a non-empty plan within the
+        # SPEC AC-3 / Plan 01-07 size envelope, (c) segment_type values are sane.
+        self.plan_coverage_client = ActionClient(
+            self,
+            PlanCoverage,
+            "/coverage_planner_node/plan_coverage",
+        )
+        self.coverage_action_probe_result = None  # set by _probe_coverage_action()
+        self.coverage_plan_waypoints = []  # populated by the action result
 
         # Periodic report timer
         self.report_timer = self.create_timer(15.0, self._periodic_report)
@@ -692,6 +707,124 @@ class E2ETestNode(Node):
             )
 
         self.obstacle_test_done = True
+
+    # ── Phase 1: PlanCoverage action probe (replaces legacy strip-planner pull-path checks) ──
+    def probe_coverage_action(
+        self, timeout_sec: float = 30.0
+    ) -> tuple:
+        """Send one PlanCoverageGoal directly to /coverage_planner_node/plan_coverage.
+
+        Independent of FollowCoveragePlan + the BT (which runs the same action in
+        production). Validates that:
+            (1) the action endpoint is live,
+            (2) the planner returns success=true with a non-empty CoverageWaypoint[],
+            (3) plan size lies in the SPEC AC-3 / Plan 01-07 envelope (50 <= n <= 400),
+            (4) at least one OUTLINE_WORKING_AREA segment is present (blade-on segment_type).
+
+        Returns (passed, details_str). Per CONTEXT.md D-04, planning may take 5-30s,
+        so we extend the rclpy spin window accordingly.
+        """
+        # 1. Action endpoint reachable?
+        if not self.plan_coverage_client.wait_for_server(timeout_sec=10.0):
+            return (
+                False,
+                "/coverage_planner_node/plan_coverage action server not available",
+            )
+
+        # 2. Build a minimal goal. Empty start_pose header tells the planner to fall
+        #    back to dock_pose (matches the BT's PlanCoverageGoal::onStart). Auto mow
+        #    angle (-1) and resume_from_checkpoint=true are the BT's defaults.
+        goal = PlanCoverage.Goal()
+        goal.start_pose = PoseStamped()  # header.frame_id="" -> use dock_pose
+        goal.dock_pose = PoseStamped()
+        goal.dock_pose.header.frame_id = "map"
+        goal.dock_pose.pose.orientation.w = 1.0
+        goal.mow_angle_offset_deg = -1.0
+        goal.resume_from_checkpoint = True
+
+        send_future = self.plan_coverage_client.send_goal_async(goal)
+        deadline = time.time() + timeout_sec
+        while not send_future.done() and time.time() < deadline and rclpy.ok():
+            rclpy.spin_once(self, timeout_sec=0.2)
+        if not send_future.done():
+            return (False, "send_goal_async timed out")
+
+        goal_handle = send_future.result()
+        if goal_handle is None or not goal_handle.accepted:
+            return (False, "PlanCoverage goal rejected by server")
+
+        result_future = goal_handle.get_result_async()
+        while not result_future.done() and time.time() < deadline and rclpy.ok():
+            rclpy.spin_once(self, timeout_sec=0.2)
+        if not result_future.done():
+            return (False, f"PlanCoverage result not received within {timeout_sec}s")
+
+        wrapped = result_future.result()
+        result = wrapped.result if wrapped is not None else None
+        if result is None:
+            return (False, "PlanCoverage result is None")
+
+        if not result.success:
+            err_code = getattr(getattr(result, "error", None), "error_code", -1)
+            err_text = getattr(getattr(result, "error", None), "human_readable", "")
+            return (
+                False,
+                f"PlanCoverage returned success=false (error_code={err_code} '{err_text}')",
+            )
+
+        plan = list(result.plan)
+        self.coverage_plan_waypoints = plan
+
+        # 3. SPEC AC-3 envelope (relaxed by Plan 01-07 from 50..200 to 50..400 due
+        #    to mathematical inconsistency in original AC; sparse-plan invariant
+        #    still catches dense-densification regressions).
+        plan_size = len(plan)
+        if plan_size < 50:
+            return (
+                False,
+                f"plan size {plan_size} < 50 (SPEC AC-3 lower bound; planner emitted too few waypoints)",
+            )
+        if plan_size > 400:
+            return (
+                False,
+                f"plan size {plan_size} > 400 (sparse-plan invariant violated; possible dense densification regression)",
+            )
+
+        # 4. Require at least one OUTLINE_WORKING_AREA segment (blade-on, FollowCoveragePlan
+        #    will dispatch FollowPath via FTCController for this segment).
+        outline_working = sum(
+            1 for wp in plan if wp.segment_type == CoverageWaypoint.SEGMENT_OUTLINE_WORKING_AREA
+        )
+        if outline_working == 0:
+            return (
+                False,
+                "plan contains no OUTLINE_WORKING_AREA waypoints (FollowCoveragePlan would have no blade-on segment to dispatch)",
+            )
+
+        # 5. Sanity: blade_enabled is True only on MOWING_BOUSTROPHEDON +
+        #    OUTLINE_WORKING_AREA + OUTLINE_OBSTACLE per SPEC R-4 / Plan 01-08
+        #    should_blade_enable contract.
+        blade_on_types = {
+            CoverageWaypoint.SEGMENT_MOWING_BOUSTROPHEDON,
+            CoverageWaypoint.SEGMENT_OUTLINE_WORKING_AREA,
+            CoverageWaypoint.SEGMENT_OUTLINE_OBSTACLE,
+        }
+        bad = [
+            (i, wp.segment_type)
+            for i, wp in enumerate(plan)
+            if wp.blade_enabled and wp.segment_type not in blade_on_types
+        ]
+        if bad:
+            return (
+                False,
+                f"plan has blade_enabled=true on non-mowing segment_types at indices {bad[:5]}",
+            )
+
+        return (
+            True,
+            f"plan size={plan_size} (50<=n<=400), outline_working_area={outline_working}, "
+            f"first_segment={plan[0].segment_type}, last_segment={plan[-1].segment_type}",
+        )
 
     def send_command(self, cmd_id: int, cmd_name: str = "") -> bool:
         """Send a HighLevelControl command and return True on success."""
@@ -1406,7 +1539,13 @@ class E2ETestNode(Node):
             if overlap_ratio > 40:
                 overlap_pass = False
 
+        # PlanCoverage action probe — populated in main() before sending START.
+        # None means "probe never ran" (init failure); treated as FAIL.
+        coverage_action_pass = bool(self.coverage_action_probe_result)
+
         criteria = [
+            ("PlanCoverage action probe (50<=plan<=400, blade-on segs present)",
+             coverage_action_pass),
             ("Undock->Plan->Mow->Dock cycle", all_phases_pass),
             ("Path tracking (median < 50cm)", path_pass),
             ("SLAM map growth", map_pass),
@@ -1443,6 +1582,29 @@ def main():
     for i in range(5, 0, -1):
         node.get_logger().info(f"Starting test in {i}s...")
         time.sleep(1)
+
+    # ── Phase 1 acceptance: PlanCoverage action probe (SPEC AC-3 / AC-12) ──
+    # Independent check that /coverage_planner_node/plan_coverage is live and emits
+    # a sane plan BEFORE driving the BT. The legacy strip-planner pull-path services
+    # and BT nodes were deleted by Plans 01-06 + 01-08; the BT now drives the same
+    # action server in production via PlanCoverageGoal + FollowCoveragePlan
+    # (Plan 01-08).
+    node.get_logger().info(
+        "=== PlanCoverage action probe (PlanCoverageGoal / FollowCoveragePlan path) ==="
+    )
+    probe_passed, probe_details = node.probe_coverage_action(timeout_sec=45.0)
+    node.coverage_action_probe_result = probe_passed
+    if probe_passed:
+        node.get_logger().info(
+            f"=== PlanCoverage probe PASS: {probe_details} ==="
+        )
+    else:
+        node.get_logger().error(
+            f"=== PlanCoverage probe FAIL: {probe_details} ==="
+        )
+        # Probe failure is informational here — the BT may still recover via its
+        # own retry. Keep the test running; the criterion is reflected in the
+        # final report.
 
     # Physical obstacles are pre-placed in the Gazebo world SDF (garden.sdf).
     # obs_swath1 at (-6.5, 0.0), obs_swath2 at (-6.0, -3.0), obs_mid at (3.0, 0.0).

@@ -187,6 +187,24 @@ def generate_launch_description() -> LaunchDescription:
     )
 
     # ------------------------------------------------------------------
+    # 4b. Coverage planner (Phase 1 rewrite)
+    #     Hosts /coverage_planner_node/plan_coverage (rclcpp_action) and
+    #     /coverage_planner_node/write_checkpoint (srv). Reads the same
+    #     mowgli_robot.yaml as map_server_node so robot_geometry,
+    #     coverage_planner, and dock_pose stay in lockstep (D-07).
+    # ------------------------------------------------------------------
+    coverage_planner_node = Node(
+        package="mowgli_coverage_planner",
+        executable="coverage_planner_node",
+        name="coverage_planner_node",
+        output="screen",
+        parameters=[
+            robot_config,
+            {"use_sim_time": use_sim_time},
+        ],
+    )
+
+    # ------------------------------------------------------------------
     # Wheel odometry is produced directly by hardware_bridge on
     # /wheel_odom (from the firmware's odom packet). The old
     # mowgli_localization/wheel_odometry_node subscribed to /wheel_ticks
@@ -340,6 +358,7 @@ def generate_launch_description() -> LaunchDescription:
             # Individual nodes
             behavior_tree_node,
             map_server_node,
+            coverage_planner_node,
             obstacle_tracker_node,
             navsat_converter_node,  # publishes /gps/absolute_pose for GUI + BT
             localization_monitor_node,

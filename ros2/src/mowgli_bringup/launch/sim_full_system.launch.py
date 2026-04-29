@@ -190,6 +190,24 @@ def generate_launch_description() -> LaunchDescription:
     )
 
     # ------------------------------------------------------------------
+    # 4b. Coverage planner (Phase 1 rewrite)
+    #     Hosts /coverage_planner_node/plan_coverage (rclcpp_action) and
+    #     /coverage_planner_node/write_checkpoint. Reads the same robot
+    #     config as map_server_node so robot_geometry / coverage_planner
+    #     / dock_pose stay in lockstep (D-07).
+    # ------------------------------------------------------------------
+    coverage_planner_node = Node(
+        package="mowgli_coverage_planner",
+        executable="coverage_planner_node",
+        name="coverage_planner_node",
+        output="screen",
+        parameters=[
+            map_params,
+            {"use_sim_time": True},
+        ],
+    )
+
+    # ------------------------------------------------------------------
     # 5. Diagnostics
     # ------------------------------------------------------------------
     diagnostics_node = Node(
@@ -287,6 +305,7 @@ def generate_launch_description() -> LaunchDescription:
             fake_hardware_bridge_node,
             behavior_tree_node,
             map_server_node,
+            coverage_planner_node,
             obstacle_tracker_node,
             diagnostics_node,
             foxglove_bridge_node,

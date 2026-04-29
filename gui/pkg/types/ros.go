@@ -1,6 +1,9 @@
 package types
 
-import "context"
+import (
+	"context"
+	"encoding/json"
+)
 
 // IRosProvider is the abstraction layer for all ROS2 communication.
 // The implementation uses a foxglove WebSocket client connecting to
@@ -12,6 +15,18 @@ type IRosProvider interface {
 	// req is marshalled as the JSON args payload.
 	// res, if non-nil, receives the unmarshalled service response values.
 	CallService(ctx context.Context, service string, req any, res any, serviceType ...string) error
+
+	// CallAction invokes a ROS2 rclcpp_action server via foxglove_bridge.
+	// action is the action name (e.g. "/coverage_planner_node/plan_coverage").
+	// goal is marshalled as the action goal payload.
+	// actionType is the .action package path (e.g.
+	// "mowgli_interfaces/action/PlanCoverage").
+	// Returns the result message JSON when the action terminates with
+	// status SUCCEEDED; otherwise returns a non-nil error describing the
+	// terminal status (rejected, canceled, aborted, ...).
+	// This call blocks for the duration of the action and does NOT
+	// stream feedback or status updates — Preview Plan is request/response.
+	CallAction(ctx context.Context, action string, goal any, actionType string) (json.RawMessage, error)
 
 	// Subscribe registers cb to receive JSON-encoded messages on a logical
 	// topic key (e.g. "status", "gps", "pose"). The cb is invoked from a

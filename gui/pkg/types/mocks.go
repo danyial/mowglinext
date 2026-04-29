@@ -2,6 +2,7 @@ package types
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sync"
 )
@@ -59,7 +60,10 @@ type MockRosProvider struct {
 	mu           sync.Mutex
 	subscribers  map[string]map[string]func(msg []byte)
 	ServiceCalls []ServiceCall
+	ActionCalls  []ActionCall
 	ServiceErr   error
+	ActionErr    error
+	ActionResult json.RawMessage
 	PublishErr   error
 	SubscribeErr error
 }
@@ -69,10 +73,17 @@ type ServiceCall struct {
 	Req     any
 }
 
+type ActionCall struct {
+	Action     string
+	Goal       any
+	ActionType string
+}
+
 func NewMockRosProvider() *MockRosProvider {
 	return &MockRosProvider{
 		subscribers:  make(map[string]map[string]func(msg []byte)),
 		ServiceCalls: []ServiceCall{},
+		ActionCalls:  []ActionCall{},
 	}
 }
 
@@ -81,6 +92,16 @@ func (m *MockRosProvider) CallService(_ context.Context, service string, req any
 	defer m.mu.Unlock()
 	m.ServiceCalls = append(m.ServiceCalls, ServiceCall{Service: service, Req: req})
 	return m.ServiceErr
+}
+
+func (m *MockRosProvider) CallAction(_ context.Context, action string, goal any, actionType string) (json.RawMessage, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.ActionCalls = append(m.ActionCalls, ActionCall{Action: action, Goal: goal, ActionType: actionType})
+	if m.ActionErr != nil {
+		return nil, m.ActionErr
+	}
+	return m.ActionResult, nil
 }
 
 func (m *MockRosProvider) Subscribe(topic string, id string, cb func(msg []byte)) error {

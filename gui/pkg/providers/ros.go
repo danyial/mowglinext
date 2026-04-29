@@ -435,6 +435,11 @@ func (r *RosProvider) CallService(ctx context.Context, service string, req any, 
 	return nil
 }
 
+// CallAction invokes a ROS2 action via foxglove_bridge — see foxglove.Client.CallAction.
+func (r *RosProvider) CallAction(ctx context.Context, action string, goal any, actionType string) (json.RawMessage, error) {
+	return r.client.CallAction(ctx, action, goal, actionType)
+}
+
 // Subscribe registers cb to receive JSON messages on the given logical topic
 // key. If a message was already received for this key, cb is invoked
 // immediately with the cached value.

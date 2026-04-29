@@ -31,3 +31,14 @@ target_link_libraries(test_dock_scan_meta_loader mowgli_lidar_docking_lib)
 # (D-16). Plan 02-06 BT tests reuse this pattern.
 ament_add_gtest(test_idock_matcher_mock test_idock_matcher_mock.cpp)
 target_link_libraries(test_idock_matcher_mock mowgli_lidar_docking_lib)
+
+# ---------------------------------------------------------------------------
+# Plan 02-04 Task 1 unit tests.
+#
+# KinematicIcpDockMatcher production path: constructor seeding (PROBE.md A1
+# AddPoints), 80%-noise rejection, 180° flip detection (Pitfall 1), Reload()
+# swap correctness (Open Q4 mtime watcher), concurrent Match+Reload race-free
+# (std::mutex protects kicp_).
+# ---------------------------------------------------------------------------
+ament_add_gtest(test_kinematic_icp_dock_matcher test_kinematic_icp_dock_matcher.cpp)
+target_link_libraries(test_kinematic_icp_dock_matcher mowgli_lidar_docking_lib)

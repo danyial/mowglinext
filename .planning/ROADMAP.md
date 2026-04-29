@@ -45,19 +45,41 @@ Plans:
 - [x] 01-11-PLAN.md — **Gap closure (R-9/R-11 production fix):** Replace `req->checkpoint.area_index = last_wp.sequence_id` with `last_wp.area_index` in `dispatch_checkpoint_write`; add `BTContext::last_mow_angle_used_deg` propagated by PlanCoverageGoal from `PlanMetadata.mow_angle_used_deg`; early-return on UINT32_MAX sentinel for dock/undock segments. 3 new TEST_F cases run an in-process WriteCheckpoint stub server and capture the request payload to assert the canonical key. → SUMMARY at `.planning/phases/01-coverage-planner-rewrite/01-11-SUMMARY.md` (commits `5405fa60`, `d1361536`, `354066e1`)
 
 
-### Phase 2 — Smooth outline-pass transitions (≤30° tangent change)
+### Phase 2 — LiDAR-based dock pose estimation (undock + closed-loop docking)
 
-**Status:** ⬜ NEXT (operator-blocking — promoted out of backlog 2026-04-29 after end-to-end mow surfaced the issue)
+**Status:** ⬜ NEXT (operator-blocking — promoted from backlog 2026-04-29 after end-to-end mow showed RTK-only docking misses the V-funnel even with continuous RTK-Fixed)
+**GH issues:** [#43](https://github.com/danyial/mowglinext/issues/43) (smart undock: LiDAR free-space probe + RTK validation), [#75](https://github.com/danyial/mowglinext/issues/75) (closed-loop LiDAR docking final approach)
+**Goal:** Eliminate the systematic "robot misses the dock V-funnel" failure mode by switching from RTK-only docking to a hybrid RTK-coarse + LiDAR-fine approach. The same LiDAR scan-match infrastructure is shared with the smart-undock work — capture once, use both directions.
+
+**Architecture:** the dock geometry is captured once (Variante γ — operator-confirmed first capture, automatic 7-day refresh on high-confidence undock matches) into `dock_scan.pcd`. At undock end, the robot's exact post-undock pose is recorded as `dock_approach.yaml`. At dock approach, RTK navigates the robot to that exact point with yaw aimed straight at the dock; from there the final 1.5 m runs under continuous ICP correction (lateral + yaw P-controller) crawling forward at ~5 cm/s until `is_charging`. By construction the approach point IS the same point the robot ended up at after undock — eliminating the cumulative drift between `dock_calibration.yaml` and reality (measured 10 cm Y-offset on the 2026-04-29 mow).
+
+**Components:**
+1. `dock_scan_capture` — captures `/scan_kicp` snapshot at GPS-RTK dock yaw finalisation, writes `dock_scan.pcd` + metadata.
+2. `RecordDockApproachPose` BT node — runs at end of UndockSequence, writes `dock_approach.yaml` from current LiDAR-match pose.
+3. `dock_scan_match` — continuous ICP `/scan_kicp` ↔ `dock_scan.pcd`, publishes `/dock_match/pose` + `/dock_match/confidence`.
+4. `ApproachDock` BT node — Nav2 NavigateToPose to `dock_approach.yaml` (RTK-coarse, replaces current opennav_docking RPP approach).
+5. `FineDock` BT node — replaces opennav_docking SimpleChargingDock for last 1.5 m. Subscribes `/dock_match/pose`, P-controller on lateral_y + yaw, `cmd_vel.x = +0.05 m/s`, stops on `is_charging`, aborts on confidence drop.
+6. GUI Dock-card extension — show `dock_match` confidence, `dock_scan.pcd` age, last fine-dock distance/lateral error.
+
+**Why next:** Smooth outlines (#70) are operator-cosmetic; closed-loop docking is operator-blocking. Both undock and dock failures stop end-to-end mowing — without #43+#75, the robot can't reliably restart the next session. Smooth outlines are deferred to Phase 3.
+
+**Out of scope (this phase):** Replacing opennav_docking entirely (FineDock is a parallel BT node, opennav_docking remains the framework). LiDAR feature-detection of the dock structure itself (we use raw scan-vs-snapshot ICP, not parametric dock detection).
+
+**Acceptance:** End-to-end COMMAND_START → undock → mow → return → autodock with `is_charging` engaged on first attempt at lateral error < 2 cm and yaw error < 1°.
+
+### Phase 3 — Smooth outline-pass transitions (≤30° tangent change)
+
+**Status:** ⬜ scheduled after Phase 2 (operator-cosmetic; operator-blocked while #43+#75 not done)
 **GH issue:** [#70](https://github.com/danyial/mowglinext/issues/70)
 **Goal:** Every transition between consecutive plan segments (outline-pass-N → N+1, last-outline → first-strip, strip → strip U-turns, last-strip → RETURN_TO_DOCK) has ≤ 30° tangent-angle change. The planner chooses the start vertex of each outline pass so its yaw smoothly continues the previous pass's exit; emits intermediate join waypoints if no vertex meets the threshold; applies the same heuristic to outline→strip and strip→strip turns.
 
-**Why next:** Phase 1 verified the planner end-to-end. First hardware mow run (2026-04-29 hexagon test) exposed visible operator-side ugliness AND physical impact: FTC PRE_ROTATE phases of 2.3 s per transition burning pose-drift budget. Pre-existing — not introduced by Phase 1 — but only became visible once the validator stopped rejecting plans wholesale.
+**Why scheduled here:** Phase 1 verified the planner end-to-end. First hardware mow run (2026-04-29 hexagon test) exposed visible operator-side ugliness AND physical impact: FTC PRE_ROTATE phases of 2.3 s per transition burning pose-drift budget. Pre-existing — not introduced by Phase 1 — but only became visible once the validator stopped rejecting plans wholesale. Demoted from Phase 2 because Phase 2 (#43+#75 LiDAR docking) is the operator-blocking issue; smooth outlines are quality-of-life.
 
 **Out of scope (this phase):** Full Bezier/spline smoothing (separate future enhancement). Multi-pass obstacle outlines (stays at 1 pass).
 
-### Phase 3 — Live coverage visualisation in the GUI
+### Phase 4 — Live coverage visualisation in the GUI
 
-**Status:** ⬜ scheduled after Phase 2 (operator-UX; quality-of-life)
+**Status:** ⬜ scheduled after Phase 3 (operator-UX; quality-of-life)
 **GH issues:** [#71](https://github.com/danyial/mowglinext/issues/71) (auto-show plan on Start), [#72](https://github.com/danyial/mowglinext/issues/72) (mowed-area overlay)
 **Goal:** Operator sees the planned coverage path the moment they click Start Mowing (no manual Preview Plan click) AND a live, semi-transparent overlay of which cells the blade has already covered during the session.
 

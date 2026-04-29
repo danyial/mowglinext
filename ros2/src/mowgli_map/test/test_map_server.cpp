@@ -646,97 +646,14 @@ TEST_F(CoverageCellsTest, MowedCellsCentroidWithOffsetArea)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Strip planner tests
+// Strip planner tests REMOVED in Plan 01-06 (this file's strip-planner
+// dependents — `ConvexHullTest`, `MBRAngleTest`, `StripLayoutGeneratesStrips`
+// — were tied to the deleted MapServerNode strip-planner internals. The
+// equivalent geometry tests for the promoted convex_hull /
+// compute_optimal_mow_angle helpers now live in the mowgli_geometry package
+// (see ros2/src/mowgli_geometry/test/) where they cover the same surface
+// at the new home of those functions.
 // ─────────────────────────────────────────────────────────────────────────────
-
-TEST_F(CoverageCellsTest, StripLayoutGeneratesStrips)
-{
-  // Trigger strip layout computation via get_next_strip service handler
-  // Since we can't easily call the service in unit test, test ensure_strip_layout
-  // indirectly by checking strip count after construction
-
-  // The area is 6x4m. With 0.2m mower width and 0.2m inset:
-  // inner_x range: -3+0.2 to 3-0.2 = -2.8 to 2.8 = 5.6m
-  // strips: floor(5.6 / 0.2) = 28 strips
-  // This test just verifies the node was created successfully with an area
-  EXPECT_GE(node_->map().getSize()(0), 10);  // Map should have reasonable size
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Convex hull and MBR angle tests
-// ─────────────────────────────────────────────────────────────────────────────
-
-TEST(ConvexHullTest, RectangleHullHasFourPoints)
-{
-  std::vector<std::pair<double, double>> pts = {{0, 0}, {4, 0}, {4, 2}, {0, 2}, {2, 1}};
-  auto hull = mowgli_map::MapServerNode::convex_hull(pts);
-  EXPECT_EQ(hull.size(), 4u);
-}
-
-TEST(ConvexHullTest, DegenerateInputReturnsAsIs)
-{
-  std::vector<std::pair<double, double>> pts = {{1, 2}};
-  auto hull = mowgli_map::MapServerNode::convex_hull(pts);
-  EXPECT_EQ(hull.size(), 1u);
-}
-
-static geometry_msgs::msg::Polygon make_polygon(const std::vector<std::pair<float, float>>& pts)
-{
-  geometry_msgs::msg::Polygon poly;
-  for (const auto& [x, y] : pts)
-  {
-    geometry_msgs::msg::Point32 p;
-    p.x = x;
-    p.y = y;
-    p.z = 0.0f;
-    poly.points.push_back(p);
-  }
-  return poly;
-}
-
-TEST(MBRAngleTest, EastWestRectangle)
-{
-  // 10m wide x 2m tall -> strips should run east-west (angle ~= 0)
-  auto poly = make_polygon({{-5, -1}, {5, -1}, {5, 1}, {-5, 1}});
-  double angle = mowgli_map::MapServerNode::compute_optimal_mow_angle(poly);
-  // Angle should be near 0 or pi (both are east-west). Normalise to [0, pi).
-  double norm = std::fmod(std::abs(angle), M_PI);
-  EXPECT_NEAR(std::min(norm, M_PI - norm), 0.0, 0.05);
-}
-
-TEST(MBRAngleTest, NorthSouthRectangle)
-{
-  // 2m wide x 10m tall -> strips should run north-south (angle ~= pi/2)
-  auto poly = make_polygon({{-1, -5}, {1, -5}, {1, 5}, {-1, 5}});
-  double angle = mowgli_map::MapServerNode::compute_optimal_mow_angle(poly);
-  double norm = std::fmod(std::abs(angle), M_PI);
-  EXPECT_NEAR(norm, M_PI / 2.0, 0.05);
-}
-
-TEST(MBRAngleTest, DiagonalRectangle)
-{
-  // Rectangle rotated 45 deg: long axis along (1,1) direction
-  double c = std::cos(M_PI / 4), s = std::sin(M_PI / 4);
-  double lx = 5.0, ly = 1.0;  // half-lengths
-  auto poly = make_polygon({
-      {static_cast<float>(c * lx - s * ly), static_cast<float>(s * lx + c * ly)},
-      {static_cast<float>(-c * lx - s * ly), static_cast<float>(-s * lx + c * ly)},
-      {static_cast<float>(-c * lx + s * ly), static_cast<float>(-s * lx - c * ly)},
-      {static_cast<float>(c * lx + s * ly), static_cast<float>(s * lx - c * ly)},
-  });
-  double angle = mowgli_map::MapServerNode::compute_optimal_mow_angle(poly);
-  // Should be near pi/4 or -3pi/4 (same direction)
-  double norm = std::fmod(angle + 2 * M_PI, M_PI);
-  EXPECT_NEAR(norm, M_PI / 4.0, 0.10);
-}
-
-TEST(MBRAngleTest, SquareReturnsValidAngle)
-{
-  auto poly = make_polygon({{0, 0}, {4, 0}, {4, 4}, {0, 4}});
-  double angle = mowgli_map::MapServerNode::compute_optimal_mow_angle(poly);
-  // Any angle is valid for a square -- just verify it's finite
-  EXPECT_TRUE(std::isfinite(angle));
-}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Entry point

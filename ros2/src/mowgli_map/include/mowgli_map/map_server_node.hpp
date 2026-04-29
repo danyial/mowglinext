@@ -47,12 +47,8 @@
 #include <mowgli_interfaces/msg/status.hpp>
 #include <mowgli_interfaces/srv/add_mowing_area.hpp>
 #include <mowgli_interfaces/srv/get_all_areas.hpp>
-#include <mowgli_interfaces/srv/get_coverage_status.hpp>
 #include <mowgli_interfaces/srv/get_mowing_area.hpp>
-#include <mowgli_interfaces/srv/get_next_strip.hpp>
-#include <mowgli_interfaces/srv/get_outline_path.hpp>
 #include <mowgli_interfaces/srv/get_recovery_point.hpp>
-#include <mowgli_interfaces/srv/preview_plan.hpp>
 #include <mowgli_interfaces/srv/set_docking_point.hpp>
 #include <mowgli_interfaces/srv/set_planning_params.hpp>
 #include <std_srvs/srv/trigger.hpp>
@@ -128,15 +124,6 @@ public:
   /// Build coverage cells OccupancyGrid (test-only accessor).
   nav_msgs::msg::OccupancyGrid coverage_cells_to_occupancy_grid() const;
 
-  // ── DEPRECATED: kept only so existing tests link until Task 2 of Plan
-  //    01-06 deletes the bodies. New code calls mowgli_geometry::* directly.
-  //    All four wrappers forward to the namespaced implementation in
-  //    mowgli_geometry (Plan 01-02 promotion).
-  static std::vector<std::pair<double, double>> convex_hull(
-      std::vector<std::pair<double, double>> pts);
-  static double compute_optimal_mow_angle(const geometry_msgs::msg::Polygon& poly);
-  void ensure_strip_layout(size_t area_index);
-
 private:
   // ── ROS callbacks ────────────────────────────────────────────────────────
 
@@ -192,19 +179,6 @@ private:
   void on_load_areas(const std_srvs::srv::Trigger::Request::SharedPtr req,
                      std_srvs::srv::Trigger::Response::SharedPtr res);
 
-  // ── DEPRECATED Strip planner services (Task 2 of Plan 01-06 deletes the
-  //    bodies + the .srv definitions in mowgli_interfaces).
-  void on_get_next_strip(const mowgli_interfaces::srv::GetNextStrip::Request::SharedPtr req,
-                         mowgli_interfaces::srv::GetNextStrip::Response::SharedPtr res);
-  void on_get_coverage_status(
-      const mowgli_interfaces::srv::GetCoverageStatus::Request::SharedPtr req,
-      mowgli_interfaces::srv::GetCoverageStatus::Response::SharedPtr res);
-  void on_preview_plan(const mowgli_interfaces::srv::PreviewPlan::Request::SharedPtr req,
-                       mowgli_interfaces::srv::PreviewPlan::Response::SharedPtr res);
-  void on_get_outline_path(
-      const mowgli_interfaces::srv::GetOutlinePath::Request::SharedPtr req,
-      mowgli_interfaces::srv::GetOutlinePath::Response::SharedPtr res);
-
   /// Live-tunable planner-parameter setter.
   ///
   /// Companion to the rcl_interfaces SetParameters service that mirrors only
@@ -254,14 +228,6 @@ private:
   /// Mark all cells within mower_width_ / 2 of (x, y) as freshly mowed.
   void mark_cells_mowed(double x, double y);
 
-  /// Check whether a point is inside a polygon (ray-casting algorithm).
-  /// Forwards to mowgli_geometry::point_in_polygon (Plan 01-02 promotion);
-  /// kept here as a thin static wrapper for legacy call-sites still in
-  /// transition. New code should call mowgli_geometry::point_in_polygon
-  /// directly.
-  static bool point_in_polygon(const geometry_msgs::msg::Point32& pt,
-                               const geometry_msgs::msg::Polygon& polygon) noexcept;
-
   /// Build and publish the keepout OccupancyGrid mask and CostmapFilterInfo.
   /// Outside the mowing boundary → 100 (lethal).  No-go zones → 100.
   /// Inside the mowing boundary → 0 (free).
@@ -300,32 +266,6 @@ private:
 
   /// Reapply area classifications to the map grid (called after loading areas).
   void apply_area_classifications();
-
-  // ── DEPRECATED strip-planner internals (Task 2 of Plan 01-06 deletes
-  //    the bodies). Declarations kept so the existing translation unit
-  //    compiles between the Task 1 commit and the Task 2 commit.
-  struct Strip
-  {
-    geometry_msgs::msg::Point start;
-    geometry_msgs::msg::Point end;
-    int column_index{0};
-  };
-  struct StripLayout
-  {
-    std::vector<Strip> strips;
-    double mow_angle{0.0};
-    bool valid{false};
-  };
-  bool find_next_unmowed_strip(size_t area_index, double robot_x, double robot_y,
-                               Strip& out_strip, bool prefer_headland);
-  nav_msgs::msg::Path strip_to_path(const Strip& strip, size_t area_index) const;
-  std::vector<geometry_msgs::msg::Point32> offset_polygon_inward(
-      const std::vector<geometry_msgs::msg::Point32>& poly, double inset) const;
-  nav_msgs::msg::Path compute_outline_path(size_t area_index) const;
-  bool is_strip_mowed(const Strip& strip, double threshold_pct = 0.2) const;
-  bool is_strip_blocked(const Strip& strip, double blocked_threshold = 0.5) const;
-  void compute_coverage_stats(size_t area_index, uint32_t& total, uint32_t& mowed,
-                              uint32_t& obstacle_cells) const;
 
   // ── Area entry ────────────────────────────────────────────────────────────
 
@@ -463,12 +403,6 @@ private:
   /// Dock exclusion polygon — cells inside are NO_GO_ZONE (no mowing strips).
   geometry_msgs::msg::Polygon dock_exclusion_polygon_;
   bool has_dock_exclusion_{false};
-
-  // ── DEPRECATED strip-planner state (Task 2 deletes these). Kept here so
-  //    ensure_strip_layout / find_next_unmowed_strip can still compile in
-  //    the Task 1 intermediate commit.
-  std::vector<StripLayout> strip_layouts_;
-  std::vector<int> current_strip_idx_;
 
   // ── Publishers ────────────────────────────────────────────────────────────
   rclcpp::Publisher<grid_map_msgs::msg::GridMap>::SharedPtr grid_map_pub_;

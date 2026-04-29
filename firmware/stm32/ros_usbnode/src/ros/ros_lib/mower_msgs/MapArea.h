@@ -26,12 +26,15 @@ namespace mower_msgs
       _obstacles_type * obstacles;
       typedef bool _is_navigation_area_type;
       _is_navigation_area_type is_navigation_area;
+      typedef uint8_t _narrow_area_strategy_type;
+      _narrow_area_strategy_type narrow_area_strategy;
 
     MapArea():
       name(""),
       area(),
       obstacles_length(0), st_obstacles(), obstacles(nullptr),
-      is_navigation_area(0)
+      is_navigation_area(0),
+      narrow_area_strategy(0)
     {
     }
 
@@ -59,6 +62,8 @@ namespace mower_msgs
       u_is_navigation_area.real = this->is_navigation_area;
       *(outbuffer + offset + 0) = (u_is_navigation_area.base >> (8 * 0)) & 0xFF;
       offset += sizeof(this->is_navigation_area);
+      *(outbuffer + offset + 0) = (this->narrow_area_strategy >> (8 * 0)) & 0xFF;
+      offset += sizeof(this->narrow_area_strategy);
       return offset;
     }
 
@@ -94,11 +99,13 @@ namespace mower_msgs
       u_is_navigation_area.base |= ((uint8_t) (*(inbuffer + offset + 0))) << (8 * 0);
       this->is_navigation_area = u_is_navigation_area.real;
       offset += sizeof(this->is_navigation_area);
+      this->narrow_area_strategy =  ((uint8_t) (*(inbuffer + offset)));
+      offset += sizeof(this->narrow_area_strategy);
      return offset;
     }
 
     virtual const char * getType() override { return "mower_msgs/MapArea"; };
-    virtual const char * getMD5() override { return "4bbb3923b3fd99c42a33c9415dc0faeb"; };
+    virtual const char * getMD5() override { return "95c4cd71205ce55b6d40a3234589b32a"; };
 
   };
 

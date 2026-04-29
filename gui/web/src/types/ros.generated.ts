@@ -166,9 +166,44 @@ export type CalibrateImuYawStatus = {
   gravity_mag_mps2?: number;
 };
 
+export const enum CheckpointConstants {
+  SWATH_DIRECTION_FORWARD = 0,
+  SWATH_DIRECTION_REVERSE = 1,
+};
+
+export type Checkpoint = {
+  area_index?: number;
+  current_outline_index?: number;
+  current_swath_index?: number;
+  swath_direction?: number;
+  last_completed_swath_index?: number;
+  next_open_swath_index?: number;
+  last_mow_angle_deg?: number;
+  last_swath_endpoint?: Pose;
+};
+
 export type CoveragePath = {
   is_outline?: boolean;
   path?: Path;
+};
+
+export const enum CoverageWaypointConstants {
+  SEGMENT_UNDOCK = 0,
+  SEGMENT_TRANSIT = 1,
+  SEGMENT_OUTLINE_WORKING_AREA = 2,
+  SEGMENT_OUTLINE_OBSTACLE = 3,
+  SEGMENT_MOWING_BOUSTROPHEDON = 4,
+  SEGMENT_RETURN_TO_DOCK = 5,
+  SEGMENT_DOCK_APPROACH = 6,
+  SEGMENT_DOCKING = 7,
+};
+
+export type CoverageWaypoint = {
+  pose?: PoseStamped;
+  sequence_id?: number;
+  speed?: number;
+  blade_enabled?: boolean;
+  segment_type?: number;
 };
 
 export const enum ESCStatusConstants {
@@ -239,11 +274,51 @@ export type MapArea = {
   area?: Polygon;
   obstacles?: Polygon[];
   is_navigation_area?: boolean;
+  narrow_area_strategy?: number;
 };
 
 export type ObstacleArray = {
   header?: { stamp: { sec: number; nanosec: number }; frame_id: string };
   obstacles?: TrackedObstacle[];
+};
+
+export const enum PlanErrorConstants {
+  ERROR_NO_AREAS = 1,
+  ERROR_AREA_TOO_NARROW = 2,
+  ERROR_OBSTACLE_BLOCKS_AREA = 3,
+  ERROR_DOCK_OUTSIDE_AREAS = 4,
+  ERROR_FOOTPRINT_VIOLATION = 5,
+  ERROR_OBSTACLE_OFFSET_FAILED = 6,
+  ERROR_RESUME_CHECKPOINT_INVALID = 7,
+  ERROR_INTERNAL = 255,
+};
+
+export type PlanError = {
+  error_code?: number;
+  failed_validation_point?: number;
+  affected_area_indices?: number[];
+  affected_polygons?: Polygon[];
+  human_readable?: string;
+};
+
+export type PlanMetadata = {
+  mow_angle_used_deg?: number;
+  outline_passes_used?: number;
+  path_spacing_used?: number;
+  processed_area_indices?: number[];
+  skipped_area_indices?: number[];
+  skip_reasons?: string[];
+  warnings?: string[];
+  checkpoint_seed?: Checkpoint;
+};
+
+export type PlanningParams = {
+  outline_passes?: number;
+  outline_offset?: number;
+  outline_overlap?: number;
+  path_spacing?: number;
+  mow_angle_offset_deg?: number;
+  headland_width?: number;
 };
 
 export type Power = {

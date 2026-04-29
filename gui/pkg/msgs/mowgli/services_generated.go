@@ -71,6 +71,14 @@ type EmergencyStopRes struct {
 	Success                   bool                           `json:"success"`
 }
 
+// GetAllAreasReq for mowgli_interfaces/srv/GetAllAreas request (empty).
+type GetAllAreasReq struct{}
+
+// GetAllAreasRes for mowgli_interfaces/srv/GetAllAreas response.
+type GetAllAreasRes struct {
+	Areas                     []MapArea                      `json:"areas"`
+}
+
 // GetCoverageStatusReq for mowgli_interfaces/srv/GetCoverageStatus request.
 type GetCoverageStatusReq struct {
 	AreaIndex                 uint32                         `json:"area_index"`
@@ -217,5 +225,16 @@ type TriggerReplanReq struct {
 type TriggerReplanRes struct {
 	Success                   bool                           `json:"success"`
 	Message                   string                         `json:"message"`
+}
+
+// WriteCheckpointReq for mowgli_interfaces/srv/WriteCheckpoint request.
+type WriteCheckpointReq struct {
+	Checkpoint                Checkpoint                     `json:"checkpoint"`
+}
+
+// WriteCheckpointRes for mowgli_interfaces/srv/WriteCheckpoint response.
+type WriteCheckpointRes struct {
+	Success                   bool                           `json:"success"`
+	ErrorMessage              string                         `json:"error_message"`
 }
 

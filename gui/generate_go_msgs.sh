@@ -279,6 +279,12 @@ ros_to_go() {
                 prefix="visualization."
             fi ;;
 
+        mowgli_interfaces/*)
+            gotype="${rostype#mowgli_interfaces/}"
+            if [[ "$current_pkg" != "mowgli_interfaces" ]]; then
+                prefix="mowgli."
+            fi ;;
+
         # Bare type name — same package
         *)  gotype="$rostype" ;;
     esac

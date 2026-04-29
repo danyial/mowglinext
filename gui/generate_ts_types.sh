@@ -152,6 +152,7 @@ ros_to_ts() {
         nav_msgs/*)                              tstype="${rostype#nav_msgs/}" ;;
         sensor_msgs/*)                           tstype="${rostype#sensor_msgs/}" ;;
         visualization_msgs/*)                    tstype="${rostype#visualization_msgs/}" ;;
+        mowgli_interfaces/*)                     tstype="${rostype#mowgli_interfaces/}" ;;
         # Bare type name — same package
         *)                                       tstype="$rostype" ;;
     esac

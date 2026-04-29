@@ -22,6 +22,10 @@ namespace mower_msgs
       _active_emergency_type active_emergency;
       typedef bool _latched_emergency_type;
       _latched_emergency_type latched_emergency;
+      typedef bool _lift_warning_type;
+      _lift_warning_type lift_warning;
+      typedef float _lift_duration_sec_type;
+      _lift_duration_sec_type lift_duration_sec;
       typedef const char* _reason_type;
       _reason_type reason;
 
@@ -29,6 +33,8 @@ namespace mower_msgs
       stamp(),
       active_emergency(0),
       latched_emergency(0),
+      lift_warning(0),
+      lift_duration_sec(0),
       reason("")
     {
     }
@@ -51,6 +57,23 @@ namespace mower_msgs
       u_latched_emergency.real = this->latched_emergency;
       *(outbuffer + offset + 0) = (u_latched_emergency.base >> (8 * 0)) & 0xFF;
       offset += sizeof(this->latched_emergency);
+      union {
+        bool real;
+        uint8_t base;
+      } u_lift_warning;
+      u_lift_warning.real = this->lift_warning;
+      *(outbuffer + offset + 0) = (u_lift_warning.base >> (8 * 0)) & 0xFF;
+      offset += sizeof(this->lift_warning);
+      union {
+        float real;
+        uint32_t base;
+      } u_lift_duration_sec;
+      u_lift_duration_sec.real = this->lift_duration_sec;
+      *(outbuffer + offset + 0) = (u_lift_duration_sec.base >> (8 * 0)) & 0xFF;
+      *(outbuffer + offset + 1) = (u_lift_duration_sec.base >> (8 * 1)) & 0xFF;
+      *(outbuffer + offset + 2) = (u_lift_duration_sec.base >> (8 * 2)) & 0xFF;
+      *(outbuffer + offset + 3) = (u_lift_duration_sec.base >> (8 * 3)) & 0xFF;
+      offset += sizeof(this->lift_duration_sec);
       uint32_t length_reason = strlen(this->reason);
       varToArr(outbuffer + offset, length_reason);
       offset += 4;
@@ -79,6 +102,25 @@ namespace mower_msgs
       u_latched_emergency.base |= ((uint8_t) (*(inbuffer + offset + 0))) << (8 * 0);
       this->latched_emergency = u_latched_emergency.real;
       offset += sizeof(this->latched_emergency);
+      union {
+        bool real;
+        uint8_t base;
+      } u_lift_warning;
+      u_lift_warning.base = 0;
+      u_lift_warning.base |= ((uint8_t) (*(inbuffer + offset + 0))) << (8 * 0);
+      this->lift_warning = u_lift_warning.real;
+      offset += sizeof(this->lift_warning);
+      union {
+        float real;
+        uint32_t base;
+      } u_lift_duration_sec;
+      u_lift_duration_sec.base = 0;
+      u_lift_duration_sec.base |= ((uint32_t) (*(inbuffer + offset + 0))) << (8 * 0);
+      u_lift_duration_sec.base |= ((uint32_t) (*(inbuffer + offset + 1))) << (8 * 1);
+      u_lift_duration_sec.base |= ((uint32_t) (*(inbuffer + offset + 2))) << (8 * 2);
+      u_lift_duration_sec.base |= ((uint32_t) (*(inbuffer + offset + 3))) << (8 * 3);
+      this->lift_duration_sec = u_lift_duration_sec.real;
+      offset += sizeof(this->lift_duration_sec);
       uint32_t length_reason;
       arrToVar(length_reason, (inbuffer + offset));
       offset += 4;
@@ -92,7 +134,7 @@ namespace mower_msgs
     }
 
     virtual const char * getType() override { return "mower_msgs/Emergency"; };
-    virtual const char * getMD5() override { return "2112a27e21de2877ca8a9b4981213577"; };
+    virtual const char * getMD5() override { return "6dcfd299684b169865102369af95a2ce"; };
 
   };
 

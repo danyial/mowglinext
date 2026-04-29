@@ -41,10 +41,31 @@ type CalibrateImuYawStatus struct {
 	GravityMagMps2            float64                        `json:"gravity_mag_mps2"`
 }
 
+// Checkpoint matches mowgli_interfaces/msg/Checkpoint.
+type Checkpoint struct {
+	AreaIndex                 uint32                         `json:"area_index"`
+	CurrentOutlineIndex       uint32                         `json:"current_outline_index"`
+	CurrentSwathIndex         uint32                         `json:"current_swath_index"`
+	SwathDirection            uint8                          `json:"swath_direction"`
+	LastCompletedSwathIndex   uint32                         `json:"last_completed_swath_index"`
+	NextOpenSwathIndex        uint32                         `json:"next_open_swath_index"`
+	LastMowAngleDeg           float64                        `json:"last_mow_angle_deg"`
+	LastSwathEndpoint         geometry.Pose                  `json:"last_swath_endpoint"`
+}
+
 // CoveragePath matches mowgli_interfaces/msg/CoveragePath.
 type CoveragePath struct {
 	IsOutline                 bool                           `json:"is_outline"`
 	Path                      nav.Path                       `json:"path"`
+}
+
+// CoverageWaypoint matches mowgli_interfaces/msg/CoverageWaypoint.
+type CoverageWaypoint struct {
+	Pose                      geometry.PoseStamped           `json:"pose"`
+	SequenceId                uint32                         `json:"sequence_id"`
+	Speed                     float32                        `json:"speed"`
+	BladeEnabled              bool                           `json:"blade_enabled"`
+	SegmentType               uint8                          `json:"segment_type"`
 }
 
 // ESCStatus matches mowgli_interfaces/msg/ESCStatus.
@@ -104,12 +125,34 @@ type MapArea struct {
 	Area                      geometry.Polygon               `json:"area"`
 	Obstacles                 []geometry.Polygon             `json:"obstacles"`
 	IsNavigationArea          bool                           `json:"is_navigation_area"`
+	NarrowAreaStrategy        uint8                          `json:"narrow_area_strategy"`
 }
 
 // ObstacleArray matches mowgli_interfaces/msg/ObstacleArray.
 type ObstacleArray struct {
 	Header                    geometry.Header                `json:"header"`
 	Obstacles                 []TrackedObstacle              `json:"obstacles"`
+}
+
+// PlanError matches mowgli_interfaces/msg/PlanError.
+type PlanError struct {
+	ErrorCode                 uint8                          `json:"error_code"`
+	FailedValidationPoint     uint8                          `json:"failed_validation_point"`
+	AffectedAreaIndices       []uint32                       `json:"affected_area_indices"`
+	AffectedPolygons          []geometry.Polygon             `json:"affected_polygons"`
+	HumanReadable             string                         `json:"human_readable"`
+}
+
+// PlanMetadata matches mowgli_interfaces/msg/PlanMetadata.
+type PlanMetadata struct {
+	MowAngleUsedDeg           float64                        `json:"mow_angle_used_deg"`
+	OutlinePassesUsed         uint32                         `json:"outline_passes_used"`
+	PathSpacingUsed           float64                        `json:"path_spacing_used"`
+	ProcessedAreaIndices      []uint32                       `json:"processed_area_indices"`
+	SkippedAreaIndices        []uint32                       `json:"skipped_area_indices"`
+	SkipReasons               []string                       `json:"skip_reasons"`
+	Warnings                  []string                       `json:"warnings"`
+	CheckpointSeed            Checkpoint                     `json:"checkpoint_seed"`
 }
 
 // PlanningParams matches mowgli_interfaces/msg/PlanningParams.

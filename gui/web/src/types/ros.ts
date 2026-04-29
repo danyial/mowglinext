@@ -3,16 +3,6 @@
 //
 // Field names are snake_case to match the JSON from rosbridge.
 
-export type Stamp = {
-  sec?: number;
-  nanosec?: number;
-};
-
-export type Header = {
-  stamp?: Stamp;
-  frame_id?: string;
-};
-
 export type Point = {
   x?: number;
   y?: number;
@@ -53,11 +43,6 @@ export type Quaternion = {
 export type Twist = {
   linear?: Vector3;
   angular?: Vector3;
-};
-
-export type TwistStamped = {
-  header?: Header;
-  twist?: Twist;
 };
 
 export type TwistWithCovariance = {
@@ -164,9 +149,61 @@ export type AbsolutePose = {
   motion_heading?: number;
 };
 
+export type CalibrateImuYawStatus = {
+  job_id?: string;
+  done?: boolean;
+  success?: boolean;
+  message?: string;
+  imu_yaw_rad?: number;
+  imu_yaw_deg?: number;
+  samples_used?: number;
+  std_dev_deg?: number;
+  imu_pitch_rad?: number;
+  imu_pitch_deg?: number;
+  imu_roll_rad?: number;
+  imu_roll_deg?: number;
+  stationary_samples_used?: number;
+  gravity_mag_mps2?: number;
+};
+
+export const enum CheckpointConstants {
+  SWATH_DIRECTION_FORWARD = 0,
+  SWATH_DIRECTION_REVERSE = 1,
+};
+
+export type Checkpoint = {
+  area_index?: number;
+  current_outline_index?: number;
+  current_swath_index?: number;
+  swath_direction?: number;
+  last_completed_swath_index?: number;
+  next_open_swath_index?: number;
+  last_mow_angle_deg?: number;
+  last_swath_endpoint?: Pose;
+};
+
 export type CoveragePath = {
   is_outline?: boolean;
   path?: Path;
+};
+
+export const enum CoverageWaypointConstants {
+  SEGMENT_UNDOCK = 0,
+  SEGMENT_TRANSIT = 1,
+  SEGMENT_OUTLINE_WORKING_AREA = 2,
+  SEGMENT_OUTLINE_OBSTACLE = 3,
+  SEGMENT_MOWING_BOUSTROPHEDON = 4,
+  SEGMENT_RETURN_TO_DOCK = 5,
+  SEGMENT_DOCK_APPROACH = 6,
+  SEGMENT_DOCKING = 7,
+};
+
+export type CoverageWaypoint = {
+  pose?: PoseStamped;
+  sequence_id?: number;
+  speed?: number;
+  blade_enabled?: boolean;
+  segment_type?: number;
 };
 
 export const enum ESCStatusConstants {
@@ -190,6 +227,8 @@ export type Emergency = {
   stamp?: { sec: number; nanosec: number };
   active_emergency?: boolean;
   latched_emergency?: boolean;
+  lift_warning?: boolean;
+  lift_duration_sec?: number;
   reason?: string;
 };
 
@@ -235,11 +274,51 @@ export type MapArea = {
   area?: Polygon;
   obstacles?: Polygon[];
   is_navigation_area?: boolean;
+  narrow_area_strategy?: number;
 };
 
 export type ObstacleArray = {
   header?: { stamp: { sec: number; nanosec: number }; frame_id: string };
   obstacles?: TrackedObstacle[];
+};
+
+export const enum PlanErrorConstants {
+  ERROR_NO_AREAS = 1,
+  ERROR_AREA_TOO_NARROW = 2,
+  ERROR_OBSTACLE_BLOCKS_AREA = 3,
+  ERROR_DOCK_OUTSIDE_AREAS = 4,
+  ERROR_FOOTPRINT_VIOLATION = 5,
+  ERROR_OBSTACLE_OFFSET_FAILED = 6,
+  ERROR_RESUME_CHECKPOINT_INVALID = 7,
+  ERROR_INTERNAL = 255,
+};
+
+export type PlanError = {
+  error_code?: number;
+  failed_validation_point?: number;
+  affected_area_indices?: number[];
+  affected_polygons?: Polygon[];
+  human_readable?: string;
+};
+
+export type PlanMetadata = {
+  mow_angle_used_deg?: number;
+  outline_passes_used?: number;
+  path_spacing_used?: number;
+  processed_area_indices?: number[];
+  skipped_area_indices?: number[];
+  skip_reasons?: string[];
+  warnings?: string[];
+  checkpoint_seed?: Checkpoint;
+};
+
+export type PlanningParams = {
+  outline_passes?: number;
+  outline_offset?: number;
+  outline_overlap?: number;
+  path_spacing?: number;
+  mow_angle_offset_deg?: number;
+  headland_width?: number;
 };
 
 export type Power = {
@@ -332,4 +411,21 @@ export type Map = {
 export type DockingSensor = {
   dock_present?: boolean;
   dock_distance?: number;
+};
+
+// ─── Manually-maintained helper types not emitted by generate_ts_types.sh ───
+// (TS generator scans only mowgli_interfaces/msg/. These geometry/std helpers
+// are hand-curated additions consumed by GUI hooks like useManualMode.)
+
+export type Stamp = {
+  sec?: number;
+  nanosec?: number;
+};
+export type Header = {
+  stamp?: Stamp;
+  frame_id?: string;
+};
+export type TwistStamped = {
+  header?: Header;
+  twist?: Twist;
 };

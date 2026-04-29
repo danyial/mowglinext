@@ -55,8 +55,14 @@ def parse_msg(msg_path: Path):
     constants = []
     fields = []
     for line in msg_path.read_text().splitlines():
+        # Strip inline comments first ("# ..." after type/name) — must precede
+        # field/constant matching, otherwise lines like "uint8 foo  # comment"
+        # silently drop out of the parser (regex anchored to $).
+        hash_idx = line.find("#")
+        if hash_idx >= 0:
+            line = line[:hash_idx]
         line = line.strip()
-        if not line or line.startswith("#"):
+        if not line:
             continue
         # Constant: "type NAME=value"
         m = re.match(r"^(\S+)\s+([A-Z_][A-Z0-9_]*)=(.+)$", line)

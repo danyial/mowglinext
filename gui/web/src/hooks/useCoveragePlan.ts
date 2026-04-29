@@ -1,13 +1,21 @@
-// useCoveragePlan — rosbridge action client for the coverage planner.
+// useCoveragePlan — Preview Plan transport for the coverage planner.
 //
-// Replaces the legacy /api/mowglinext/preview-plan/* HTTP path (Plan 04).
-// Calls /coverage_planner_node/plan_coverage (mowgli_interfaces/action/PlanCoverage)
-// directly via the roslib websocket and converts the resulting CoverageWaypoint[]
-// into a single GeoJSON FeatureCollection with `segment_type` properties for the
-// MapPage Mapbox layers (D-11 colour palette).
+// Posts the PlanCoverage goal to the Go-side relay endpoint
+// `POST /api/mowglinext/action/plan-coverage`. The Go backend then drives
+// the rclcpp_action over foxglove_bridge using the synthetic
+// `_action/send_goal` + `_action/get_result` services that every ROS2
+// action server exposes (see gui/pkg/foxglove/action.go).
+//
+// History: an earlier revision of this hook spoke the rosbridge_v2
+// WebSocket protocol directly via roslib on port 9090. That stack
+// assumed a `rosbridge_server` node — but this fork replaced
+// rosbridge_server with foxglove_bridge (port 8765) for the binary
+// protocol and intra-process performance gains. With no rosbridge_server
+// running, every Preview Plan attempt failed with
+// "rosbridge connection failed (...)". Routing the action through the
+// existing foxglove client closes that gap with one bridge instead of two.
 //
 // The hook owns:
-// - Connection lifecycle to the rosbridge_server on ws://<host>:9090.
 // - PlanCoverage goal -> result conversion to FeatureCollection.
 // - Loading / Active / Idle state machine per UI-SPEC §Interaction Contract.
 // - notification.error mapping for all 8 PlanError.error_code values per
@@ -15,16 +23,13 @@
 //
 // React JSX in MapPage auto-escapes the popup body strings produced from the
 // FeatureCollection. The hook never returns HTML — only typed plain objects.
-import {useCallback, useEffect, useMemo, useRef, useState} from "react";
+import {useCallback, useMemo, useRef, useState} from "react";
 import type {Feature, FeatureCollection, LineString, Point, Position} from "geojson";
-import {Action, Ros} from "roslib";
 import {App} from "antd";
 import {transpose} from "../utils/map.tsx";
 import type {CoverageWaypoint, PlanError, PlanMetadata, PoseStamped} from "../types/ros.ts";
 
-const ROSBRIDGE_PORT = 9090;
-const ACTION_NAME = "/coverage_planner_node/plan_coverage";
-const ACTION_TYPE = "mowgli_interfaces/action/PlanCoverage";
+const ENDPOINT = "/api/mowglinext/action/plan-coverage";
 
 /**
  * Map CoverageWaypoint.segment_type uint8 constants (defined in
@@ -202,17 +207,22 @@ function waypointsToFeatureCollection(
     return {type: "FeatureCollection", features};
 }
 
-/**
- * Resolve the rosbridge WebSocket URL. In dev we still hit the same host (the
- * developer is expected to expose port 9090 from the mowgli-ros2 container);
- * in prod we use the page host. https pages get wss://, http pages get ws://.
- */
-function resolveRosbridgeUrl(): string {
-    if (typeof window === "undefined") {
-        return `ws://localhost:${ROSBRIDGE_PORT}`;
-    }
-    const proto = window.location.protocol === "https:" ? "wss" : "ws";
-    return `${proto}://${window.location.hostname}:${ROSBRIDGE_PORT}`;
+interface PlanGoal {
+    start_pose: PoseStamped;
+    dock_pose: PoseStamped;
+    mow_angle_offset_deg: number;
+    resume_from_checkpoint: boolean;
+}
+
+interface PlanResult {
+    success?: boolean;
+    plan?: CoverageWaypoint[];
+    metadata?: PlanMetadata;
+    error?: PlanError;
+}
+
+interface ErrorResponse {
+    error?: string;
 }
 
 export function useCoveragePlan(proj: CoveragePlanProjection): UseCoveragePlanResult {
@@ -222,65 +232,8 @@ export function useCoveragePlan(proj: CoveragePlanProjection): UseCoveragePlanRe
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
 
-    // The Ros object owns the websocket; create lazily on first request.
-    const rosRef = useRef<Ros | null>(null);
     const inFlightRef = useRef<boolean>(false);
     const progressNotificationKeyRef = useRef<string | null>(null);
-
-    const ensureRos = useCallback((): Promise<Ros> => {
-        return new Promise((resolve, reject) => {
-            if (rosRef.current && rosRef.current.isConnected) {
-                resolve(rosRef.current);
-                return;
-            }
-            const ros = rosRef.current ?? new Ros({url: resolveRosbridgeUrl()});
-            rosRef.current = ros;
-            if (ros.isConnected) {
-                resolve(ros);
-                return;
-            }
-            type RosLike = {
-                on: (event: string, cb: (e: unknown) => void) => void;
-                off?: (event: string, cb: (e: unknown) => void) => void;
-                removeListener?: (event: string, cb: (e: unknown) => void) => void;
-            };
-            const rosEmitter = ros as unknown as RosLike;
-            const detach = (event: string, cb: (e: unknown) => void) => {
-                if (typeof rosEmitter.off === "function") {
-                    rosEmitter.off(event, cb);
-                } else if (typeof rosEmitter.removeListener === "function") {
-                    rosEmitter.removeListener(event, cb);
-                }
-            };
-            const onConnection = () => {
-                detach("error", onError);
-                resolve(ros);
-            };
-            const onError = (err: unknown) => {
-                detach("connection", onConnection);
-                reject(err instanceof Error ? err : new Error("rosbridge connection failed"));
-            };
-            rosEmitter.on("connection", onConnection);
-            rosEmitter.on("error", onError);
-            // Force open if not already attempted.
-            try {
-                ros.connect(resolveRosbridgeUrl());
-            } catch (e) {
-                reject(e instanceof Error ? e : new Error(String(e)));
-            }
-        });
-    }, []);
-
-    useEffect(() => {
-        return () => {
-            try {
-                rosRef.current?.close();
-            } catch {
-                // ignore on teardown
-            }
-            rosRef.current = null;
-        };
-    }, []);
 
     const closeProgressNotification = useCallback(() => {
         if (progressNotificationKeyRef.current) {
@@ -316,36 +269,6 @@ export function useCoveragePlan(proj: CoveragePlanProjection): UseCoveragePlanRe
                 duration: 0,
             });
 
-            let ros: Ros;
-            try {
-                ros = await ensureRos();
-            } catch (e) {
-                inFlightRef.current = false;
-                setIsLoading(false);
-                closeProgressNotification();
-                const description = e instanceof Error ? e.message : String(e);
-                setError(description);
-                notification.error({
-                    message: "Plan generation failed",
-                    description: `Internal planner error: rosbridge connection failed (${description}).`,
-                });
-                return;
-            }
-
-            type PlanResult = {
-                success?: boolean;
-                plan?: CoverageWaypoint[];
-                metadata?: PlanMetadata;
-                error?: PlanError;
-            };
-            type PlanFeedback = {progress_percent?: number; phase?: string};
-            type PlanGoal = {
-                start_pose: PoseStamped;
-                dock_pose: PoseStamped;
-                mow_angle_offset_deg: number;
-                resume_from_checkpoint: boolean;
-            };
-
             const goal: PlanGoal = {
                 start_pose: args.startPose ?? {
                     pose: {position: {x: 0, y: 0, z: 0}, orientation: {x: 0, y: 0, z: 0, w: 1}},
@@ -355,79 +278,68 @@ export function useCoveragePlan(proj: CoveragePlanProjection): UseCoveragePlanRe
                 resume_from_checkpoint: args.resumeFromCheckpoint ?? false,
             };
 
-            const actionClient = new Action<PlanGoal, PlanFeedback, PlanResult>({
-                ros,
-                name: ACTION_NAME,
-                actionType: ACTION_TYPE,
-            });
+            const finish = () => {
+                inFlightRef.current = false;
+                setIsLoading(false);
+                closeProgressNotification();
+            };
 
-            return new Promise<void>((resolve) => {
-                let finished = false;
-                const finish = () => {
-                    if (finished) return;
-                    finished = true;
-                    inFlightRef.current = false;
-                    setIsLoading(false);
-                    closeProgressNotification();
-                    resolve();
-                };
+            try {
+                const response = await fetch(ENDPOINT, {
+                    method: "POST",
+                    headers: {"Content-Type": "application/json"},
+                    body: JSON.stringify(goal),
+                });
 
-                try {
-                    actionClient.sendGoal(
-                        goal,
-                        // result callback
-                        (result: PlanResult) => {
-                            if (result.success) {
-                                const fc = waypointsToFeatureCollection(result.plan ?? [], proj);
-                                setPlanGeoJson(fc);
-                                setPlanMetadata(result.metadata ?? null);
-                                setError(null);
-                                const n = result.plan?.length ?? 0;
-                                const m = result.metadata?.processed_area_indices?.length ?? 0;
-                                notification.success({
-                                    message: `Plan ready — ${n} waypoints, ${m} areas`,
-                                });
-                            } else {
-                                const description = planErrorBody(result.error);
-                                setPlanGeoJson(null);
-                                setPlanMetadata(null);
-                                setError(description);
-                                notification.error({
-                                    message: "Plan generation failed",
-                                    description,
-                                });
-                            }
-                            finish();
-                        },
-                        // feedback callback
-                        (_feedback: PlanFeedback) => {
-                            // Feedback is informational only; AsyncButton's spinner already covers the wait.
-                        },
-                        // failed callback
-                        (failure: string) => {
-                            const description = failure || "Action server unreachable.";
-                            setPlanGeoJson(null);
-                            setPlanMetadata(null);
-                            setError(description);
-                            notification.error({
-                                message: "Plan generation failed",
-                                description: `Internal planner error: ${description}`,
-                            });
-                            finish();
-                        },
-                    );
-                } catch (e) {
-                    const description = e instanceof Error ? e.message : String(e);
+                if (!response.ok) {
+                    const body: ErrorResponse = await response.json().catch(() => ({} as ErrorResponse));
+                    const description = body.error ?? `HTTP ${response.status} ${response.statusText}`;
+                    setPlanGeoJson(null);
+                    setPlanMetadata(null);
                     setError(description);
                     notification.error({
                         message: "Plan generation failed",
                         description: `Internal planner error: ${description}`,
                     });
                     finish();
+                    return;
                 }
-            });
+
+                const result: PlanResult = await response.json();
+                if (result.success) {
+                    const fc = waypointsToFeatureCollection(result.plan ?? [], proj);
+                    setPlanGeoJson(fc);
+                    setPlanMetadata(result.metadata ?? null);
+                    setError(null);
+                    const n = result.plan?.length ?? 0;
+                    const m = result.metadata?.processed_area_indices?.length ?? 0;
+                    notification.success({
+                        message: `Plan ready — ${n} waypoints, ${m} areas`,
+                    });
+                } else {
+                    const description = planErrorBody(result.error);
+                    setPlanGeoJson(null);
+                    setPlanMetadata(null);
+                    setError(description);
+                    notification.error({
+                        message: "Plan generation failed",
+                        description,
+                    });
+                }
+                finish();
+            } catch (e) {
+                const description = e instanceof Error ? e.message : String(e);
+                setPlanGeoJson(null);
+                setPlanMetadata(null);
+                setError(description);
+                notification.error({
+                    message: "Plan generation failed",
+                    description: `Internal planner error: ${description}`,
+                });
+                finish();
+            }
         },
-        [ensureRos, notification, closeProgressNotification, proj],
+        [notification, closeProgressNotification, proj],
     );
 
     return useMemo(

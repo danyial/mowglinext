@@ -3,25 +3,25 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: unknown
-stopped_at: Completed 01-04
-last_updated: "2026-04-29T06:39:29.033Z"
+stopped_at: Completed 01-05
+last_updated: "2026-04-29T06:55:06.062Z"
 progress:
   total_phases: 1
   completed_phases: 0
   total_plans: 9
-  completed_plans: 4
-  percent: 44
+  completed_plans: 5
+  percent: 56
 ---
 
 # Project state
 
 ## Current phase
 
-1 — Coverage Planner Rewrite (Wave 1 + Wave 2 complete — 4/9 plans done)
+1 — Coverage Planner Rewrite (Waves 1-2 complete + Wave 3 half-complete — 5/9 plans done)
 
 ## Current Plan
 
-04 — GUI integration (COMPLETE — committed `66ffe815`, `504f490c`; SUMMARY at `.planning/phases/01-coverage-planner-rewrite/01-04-SUMMARY.md`)
+05 — coverage_planner skeleton (COMPLETE — committed `4bce4424`, `72a4d925`, `14e51df4`; SUMMARY at `.planning/phases/01-coverage-planner-rewrite/01-05-SUMMARY.md`)
 
 ## Total Plans
 
@@ -29,19 +29,19 @@ progress:
 
 ## Resume point
 
-- **Last completed step:** Plan 01-04 (GUI integration) executed via `/gsd-execute-phase 1 --auto` (sequential mode). SUMMARY committed.
-- **Next step:** Wave 3 opens — 01-05 (coverage_planner skeleton) and 01-06 (map_server cleanup) are both unblocked.
+- **Last completed step:** Plan 01-05 (coverage_planner skeleton) executed via `/gsd-execute-phase 1 --auto` (sequential mode). SUMMARY committed.
+- **Next step:** Wave 3 second half — 01-06 (map_server cleanup) is unblocked. After that, Wave 4 opens with 01-07 (planner core, fills the PLAN-07-PLACEHOLDER block in `coverage_planner_node.cpp`) and 01-08 (BT integration).
 - **Auto-chain flag persisted:** yes (`workflow._auto_chain_active=true` in `.planning/config.json`)
 - **Wave 1 plans:** 01-01 ✅ COMPLETE, 01-03 ✅ COMPLETE
 - **Wave 2 plans:** 01-02 ✅ COMPLETE, 01-04 ✅ COMPLETE
-- **Wave 3 plans:** 01-05 (coverage_planner skeleton), 01-06 (map_server cleanup)
+- **Wave 3 plans:** 01-05 ✅ COMPLETE, 01-06 (map_server cleanup)
 - **Wave 4 plans:** 01-07 (planner core: validators + sweep + narrow strategies), 01-08 (BT integration)
 - **Wave 5 plans:** 01-09 (E2E sim + Pi5 hardware smoke — operator-gated checkpoint)
 
 ## Last session
 
-- **Last session:** 2026-04-29T06:32:37Z
-- **Stopped at:** Completed 01-04
+- **Last session:** 2026-04-29T06:54:11.769Z
+- **Stopped at:** Completed 01-05
 - **Resume file:** None
 - **Blockers:** None
 
@@ -53,6 +53,7 @@ progress:
 | 01    | 03   | 3min     | 2     | 2     |
 | 01    | 02   | 9min     | 2     | 11    |
 | 01    | 04   | 15min    | 2     | 7     |
+| 01    | 05   | 8min     | 2     | 11    |
 
 ## Active branch
 
@@ -95,3 +96,8 @@ These were locked in chat on 2026-04-28 before `/gsd-spec-phase` started — the
 | 2026-04-29 | Plan 01-04: Browser → rosbridge direct on `ws://<host>:9090`, not through the Go API server | The Go API has no generic action-relay endpoint, and adding one was outside this plan's GUI-only scope. Direct browser→rosbridge matches CLAUDE.md's documented rosbridge_server placement (docker/README.md:305). Operators must expose port 9090 from the mowgli-ros2 container. |
 | 2026-04-29 | Plan 01-04: Cross-segment-type bridge segments emit a TRANSIT line | Keeps the polyline visually continuous across segment_type boundaries; the D-11 match expression renders bridges grey, matching operator intuition that the robot physically transits between segments even when both endpoints share a non-TRANSIT label. |
 | 2026-04-29 | Plan 01-04: Removed the legacy coverageLineWidth zoom-interpolated tool_width memo | Tightly coupled to the deleted plan-preview-coverage layer; the new coverage-plan-line uses a fixed 2.5 px width per UI-SPEC. A tool_width-tracking band can be reintroduced in a future plan as a separate non-segment_type-coloured layer if operators want it back. |
+| 2026-04-29 | Plan 01-05: PLAN-07-PLACEHOLDER marker block in `coverage_planner_node.cpp::execute()` | Plan 01-07 will literally `grep -n PLAN-07-PLACEHOLDER` to find the extension point. Action plumbing is end-to-end live for the empty-areas + invalid-geometry paths today; the placeholder short-circuits with ERROR_INTERNAL until Plan 01-07 lands the validator pipeline + plan builder. |
+| 2026-04-29 | Plan 01-05: Checkpoint .kv body does NOT carry `area_index` — encoded only in the filename via `std::to_string` | Mitigates T-05-01 (path traversal) at the type-system level: `uint32 -> std::to_string` produces digit-only output, no `..` or slash escape possible. `read_checkpoint_file` fills `area_index` from the caller's argument. |
+| 2026-04-29 | Plan 01-05: T-05-02 NaN guard lives in `write_checkpoint_file`, not `serialize_checkpoint` | `serialize` is reused by the round-trip test where we want it to faithfully echo whatever it gets. `write_checkpoint_file` is the single trust boundary on the BT->planner path; `std::isfinite` rejects NaN endpoint x/y + mow_angle_deg before serialising. |
+| 2026-04-29 | Plan 01-05: Yaw serialised as a single scalar (`last_swath_endpoint_yaw=`) extracted via `tf2::getYaw` | Six decimals is enough resolution for the SPEC R-11 5cm/5deg tolerance, and the .kv stays human-inspectable in the field. Parser reconstructs the quaternion via `tf2::Quaternion::setRPY(0, 0, yaw)` so the Pose is fully populated when read back. |
+| 2026-04-29 | Plan 01-05: Tests link against the STATIC `mowgli_coverage_planner_lib`, not the executable | Mirrors `mowgli_map`'s gtest pattern. `test_coverage_planner_skeleton` spins the node on a SingleThreadedExecutor in a worker thread and queries the action endpoint from a fresh client node — exercises the action plumbing end-to-end without re-running `main.cpp`. |

@@ -3,25 +3,25 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: unknown
-stopped_at: Completed Plan 01-03
-last_updated: "2026-04-29T05:51:44.940Z"
+stopped_at: Completed 01-02
+last_updated: "2026-04-29T06:10:01.186Z"
 progress:
   total_phases: 1
   completed_phases: 0
   total_plans: 9
-  completed_plans: 2
-  percent: 22
+  completed_plans: 3
+  percent: 33
 ---
 
 # Project state
 
 ## Current phase
 
-1 — Coverage Planner Rewrite (Wave 1 complete — 2/9 plans done)
+1 — Coverage Planner Rewrite (Wave 1 + Wave-2 partial — 3/9 plans done)
 
 ## Current Plan
 
-03 — mowgli_robot.yaml robot_geometry: + CLAUDE.md Architecture Invariants (COMPLETE — committed `8bf52a71`, `fb7020c8`; SUMMARY at `.planning/phases/01-coverage-planner-rewrite/01-03-SUMMARY.md`)
+02 — mowgli_geometry header-only library (COMPLETE — committed `ae551459`, `63933306`, `351f4139`; SUMMARY at `.planning/phases/01-coverage-planner-rewrite/01-02-SUMMARY.md`)
 
 ## Total Plans
 
@@ -29,20 +29,20 @@ progress:
 
 ## Resume point
 
-- **Last completed step:** Plan 01-03 executed via `/gsd-execute-phase 1 --auto` (sequential mode). SUMMARY committed.
-- **Next step:** Wave 2 — Plan 01-02 (`mowgli_geometry` header-only library) and Plan 01-04 (GUI integration) are now unblocked. Both depend only on Plan 01-01 (interface contracts) which is complete.
+- **Last completed step:** Plan 01-02 executed via `/gsd-execute-phase 1 --auto` (sequential mode). SUMMARY committed.
+- **Next step:** Plan 01-04 (GUI integration) is the remaining Wave 2 plan and is unblocked. After Wave 2 closes, Wave 3 opens 01-05 (coverage_planner skeleton) and 01-06 (map_server cleanup).
 - **Auto-chain flag persisted:** yes (`workflow._auto_chain_active=true` in `.planning/config.json`)
 - **Wave 1 plans:** 01-01 ✅ COMPLETE, 01-03 ✅ COMPLETE
-- **Wave 2 plans:** 01-02 (mowgli_geometry library), 01-04 (GUI integration)
+- **Wave 2 plans:** 01-02 ✅ COMPLETE, 01-04 (GUI integration)
 - **Wave 3 plans:** 01-05 (coverage_planner skeleton), 01-06 (map_server cleanup)
 - **Wave 4 plans:** 01-07 (planner core: validators + sweep + narrow strategies), 01-08 (BT integration)
 - **Wave 5 plans:** 01-09 (E2E sim + Pi5 hardware smoke — operator-gated checkpoint)
 
 ## Last session
 
-- **Last session:** 2026-04-29T05:51:44.933Z
-- **Stopped at:** Completed Plan 01-03
-- **Resume file:** `.planning/phases/01-coverage-planner-rewrite/01-03-SUMMARY.md`
+- **Last session:** 2026-04-29T06:10:01.179Z
+- **Stopped at:** Completed 01-02
+- **Resume file:** None
 - **Blockers:** None
 
 ## Performance Metrics
@@ -51,6 +51,7 @@ progress:
 |-------|------|----------|-------|-------|
 | 01    | 01   | 12min    | 3     | 18    |
 | 01    | 03   | 3min     | 2     | 2     |
+| 01    | 02   | 9min     | 2     | 11    |
 
 ## Active branch
 
@@ -86,3 +87,6 @@ These were locked in chat on 2026-04-28 before `/gsd-spec-phase` started — the
 | 2026-04-29 | Plan 01-01: PlanCoverage.action old BCD-style schema discarded entirely | No clients of old schema on dev branch yet; clean rewrite is safer than versioned shim |
 | 2026-04-29 | Plan 01-01: Fixed 3 latent codegen bugs (firmware parser inline-comment + Go/TS missing mowgli_interfaces case branches) | Bugs were silently corrupting Emergency.h fields and would have blocked all downstream waves; in-scope per Rule 1 |
 | 2026-04-29 | Plan 01-03: Invariant #15 wording references PolygonSlow polygon + dormant coverage_server.robot_width, not the fictitious collision_monitor.robot_width parameter | The plan-suggested referent does not exist in nav2_params.yaml — the live collision_monitor block uses an explicit polygon. Honest documentation > fictitious referent (Rule 1 fix). |
+| 2026-04-29 | Plan 01-02: footprint_inside_polygon uses bg::covered_by, not bg::within | Coverage planning needs the footprint to be allowed to graze the working-area boundary on outline passes; bg::within would reject those poses. T-02-03 GIGO mitigation lives in Plan 05 ValidatorPipeline. |
+| 2026-04-29 | Plan 01-02: PCA degenerate-rank fallback uses the polygon's longest edge, not the SelfAdjointEigenSolver eigenvector | Robust against numerical noise on rank-1 covariances and matches SPECIAL_PATTERN intent (centerline along the dominant geometric span). |
+| 2026-04-29 | Plan 01-02: atomic_write returns false when fsync(parent_dir) fails | The file is in place at that point but durability across power loss is at risk. Failing loudly surfaces SD/ext4 health issues per RESEARCH §9.4 instead of silently degrading the checkpoint guarantee. |

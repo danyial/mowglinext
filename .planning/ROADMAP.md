@@ -8,8 +8,8 @@ The pull-based, ad-hoc strip planner inside `map_server_node` is being replaced 
 
 ### Phase 1 — Coverage Planner Rewrite
 
-**Status:** in progress (Wave 1 complete — 2/9 plans done)
-**Plans:** 9 plans (2 complete, 7 remaining)
+**Status:** in progress (Wave 1 + Wave-2 partial — 3/9 plans done)
+**Plans:** 9 plans (3 complete, 6 remaining)
 **Goal:** Replace the existing pull-based strip planner with a new `coverage_planner_node` that emits a complete deterministic sequential `PoseStamped` waypoint plan via `PlanCoverage.action`, with metadata, YAML checkpoints, and pre-flight geometric validation. Plan inkludiert Undock/Approach/Dock-Segmente. BT folgt Plan sequenziell.
 
 **Canonical refs:**
@@ -33,7 +33,7 @@ The pull-based, ad-hoc strip planner inside `map_server_node` is being replaced 
 
 Plans:
 - [x] 01-01-PLAN.md — mowgli_interfaces extensions (4 new msgs + GetAllAreas.srv + WriteCheckpoint.srv + PlanCoverage.action rewrite + MapArea.narrow_area_strategy + firmware/Go/TS regen) → SUMMARY at `.planning/phases/01-coverage-planner-rewrite/01-01-SUMMARY.md` (commits `27cae866`, `dd19d5c9`, `d39255c4`)
-- [ ] 01-02-PLAN.md — mowgli_geometry header-only library (4 promoted helpers + footprint/PCA/atomic_write + 4 unit tests)
+- [x] 01-02-PLAN.md — mowgli_geometry header-only library (4 promoted helpers + footprint/PCA/atomic_write + 4 unit tests) → SUMMARY at `.planning/phases/01-coverage-planner-rewrite/01-02-SUMMARY.md` (commits `ae551459`, `63933306`, `351f4139`)
 - [x] 01-03-PLAN.md — mowgli_robot.yaml robot_geometry: section + CLAUDE.md Architecture Invariants #7 rewrite + #15 (manual sync rule) → SUMMARY at `.planning/phases/01-coverage-planner-rewrite/01-03-SUMMARY.md` (commits `8bf52a71`, `fb7020c8`)
 - [ ] 01-04-PLAN.md — GUI: useCoveragePlan hook + delete plan-preview-* layers + add coverage-plan-* layers + EditAreaModal narrow_area_strategy dropdown + MapToolbar Preview Plan button
 - [ ] 01-05-PLAN.md — mowgli_coverage_planner skeleton: action server + GetAllAreas client + WriteCheckpoint service + Checkpoint .kv I/O + 4 unit tests

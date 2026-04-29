@@ -1,0 +1,44 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>mowgli_lidar_docking</name>
+  <version>0.1.0</version>
+  <description>
+    LiDAR-based fine-docking pose estimation for the Mowgli mower (Phase 2). Owns the
+    IDockMatcher contract (D-16), the KinematicICP-backed dock_scan_match production
+    matcher (Plan 02-04), PCD save/load (D-06), the compute_confidence helper for
+    inlier_ratio + RMSE trust-gating (SPEC R-3), and the dock_approach.yaml /
+    dock_scan_meta.yaml flat key=value loaders (D-04 / D-17).
+
+    This plan (02-02, Wave 1) ships only the static library + unit tests; the ROS2
+    node + matcher implementation arrive in Plan 02-04. The library has zero TF /
+    publisher / subscriber code so Architecture Invariant #1 holds.
+  </description>
+  <maintainer email="cedric@mowgli.dev">Cedric</maintainer>
+  <license>GPL-3.0</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <depend>rclcpp</depend>
+  <depend>mowgli_interfaces</depend>
+  <depend>mowgli_geometry</depend>
+  <depend>sensor_msgs</depend>
+  <depend>geometry_msgs</depend>
+  <depend>tf2</depend>
+  <depend>tf2_geometry_msgs</depend>
+  <depend>pcl_conversions</depend>
+  <depend>pcl_ros</depend>
+  <depend>libpcl-all-dev</depend>
+  <depend>sophus</depend>
+  <depend>laser_geometry</depend>
+  <depend>kinematic_icp</depend>
+  <depend>eigen</depend>
+
+  <test_depend>ament_cmake_gtest</test_depend>
+  <test_depend>ament_lint_auto</test_depend>
+  <test_depend>ament_lint_common</test_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

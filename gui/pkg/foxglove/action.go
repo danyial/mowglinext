@@ -103,22 +103,28 @@ func (c *Client) CallAction(
 		return nil, fmt.Errorf("action get_result: %w", err)
 	}
 
-	var resultEnv struct {
-		Status int             `json:"status"`
-		Result json.RawMessage `json:"result"`
+	// foxglove_bridge flattens the rclcpp_action `<Action>_GetResult_Response`
+	// (which on the ROS2 IDL side is `int8 status; <Result> result`) into a
+	// single object where the `<Result>` fields sit alongside `status` at
+	// the top level — there is no nested `result` key. So we read `status`
+	// off the same map and pass the full payload back as the result; the
+	// caller's PlanCoverageResult struct picks out `success / plan /
+	// metadata / error` and ignores the trailing `status` field.
+	var statusEnv struct {
+		Status int `json:"status"`
 	}
-	if err := json.Unmarshal(rawResult, &resultEnv); err != nil {
-		return nil, fmt.Errorf("action get_result unmarshal: %w", err)
+	if err := json.Unmarshal(rawResult, &statusEnv); err != nil {
+		return nil, fmt.Errorf("action get_result unmarshal status: %w", err)
 	}
 
-	switch resultEnv.Status {
+	switch statusEnv.Status {
 	case ActionStatusSucceeded:
-		return resultEnv.Result, nil
+		return rawResult, nil
 	case ActionStatusCanceled:
 		return nil, fmt.Errorf("action %s canceled", action)
 	case ActionStatusAborted:
 		return nil, fmt.Errorf("action %s aborted by server", action)
 	default:
-		return nil, fmt.Errorf("action %s ended with non-success status %d", action, resultEnv.Status)
+		return nil, fmt.Errorf("action %s ended with non-success status %d", action, statusEnv.Status)
 	}
 }

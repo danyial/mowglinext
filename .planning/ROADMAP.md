@@ -8,8 +8,8 @@ The pull-based, ad-hoc strip planner inside `map_server_node` is being replaced 
 
 ### Phase 1 — Coverage Planner Rewrite
 
-**Status:** planning
-**Plans:** 9 plans
+**Status:** in progress (Wave 1 — 1/9 plans complete)
+**Plans:** 9 plans (1 complete, 8 remaining)
 **Goal:** Replace the existing pull-based strip planner with a new `coverage_planner_node` that emits a complete deterministic sequential `PoseStamped` waypoint plan via `PlanCoverage.action`, with metadata, YAML checkpoints, and pre-flight geometric validation. Plan inkludiert Undock/Approach/Dock-Segmente. BT folgt Plan sequenziell.
 
 **Canonical refs:**
@@ -32,7 +32,7 @@ The pull-based, ad-hoc strip planner inside `map_server_node` is being replaced 
 - Bezier/Spline smoothing — straight segments + in-place yaw rotations only
 
 Plans:
-- [ ] 01-01-PLAN.md — mowgli_interfaces extensions (4 new msgs + GetAllAreas.srv + WriteCheckpoint.srv + PlanCoverage.action rewrite + MapArea.narrow_area_strategy + firmware/Go/TS regen)
+- [x] 01-01-PLAN.md — mowgli_interfaces extensions (4 new msgs + GetAllAreas.srv + WriteCheckpoint.srv + PlanCoverage.action rewrite + MapArea.narrow_area_strategy + firmware/Go/TS regen) → SUMMARY at `.planning/phases/01-coverage-planner-rewrite/01-01-SUMMARY.md` (commits `27cae866`, `dd19d5c9`, `d39255c4`)
 - [ ] 01-02-PLAN.md — mowgli_geometry header-only library (4 promoted helpers + footprint/PCA/atomic_write + 4 unit tests)
 - [ ] 01-03-PLAN.md — mowgli_robot.yaml robot_geometry: section + CLAUDE.md Architecture Invariant #15 (manual sync rule)
 - [ ] 01-04-PLAN.md — GUI: useCoveragePlan hook + delete plan-preview-* layers + add coverage-plan-* layers + EditAreaModal narrow_area_strategy dropdown + MapToolbar Preview Plan button

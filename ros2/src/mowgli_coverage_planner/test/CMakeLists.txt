@@ -38,3 +38,15 @@ target_include_directories(test_narrow_area_strategies PRIVATE ${_test_include_d
 ament_add_gtest(test_segment_type_invariants test_segment_type_invariants.cpp)
 target_link_libraries(test_segment_type_invariants mowgli_coverage_planner_lib)
 target_include_directories(test_segment_type_invariants PRIVATE ${_test_include_dirs})
+
+# ---------------------------------------------------------------------------
+# Plan 01-07 Task 2 unit tests (auto-rotate + resume).
+# ---------------------------------------------------------------------------
+
+ament_add_gtest(test_auto_rotate test_auto_rotate.cpp)
+target_link_libraries(test_auto_rotate mowgli_coverage_planner_lib)
+target_include_directories(test_auto_rotate PRIVATE ${_test_include_dirs})
+
+ament_add_gtest(test_resume test_resume.cpp)
+target_link_libraries(test_resume mowgli_coverage_planner_lib)
+target_include_directories(test_resume PRIVATE ${_test_include_dirs})

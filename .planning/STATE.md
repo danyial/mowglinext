@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: hardware-smoke-pending
-stopped_at: 01-09 automatable scope complete; SPEC AC-13 Pi5 garden smoke pending
-last_updated: "2026-04-29T09:30:00.000Z"
+status: unknown
+stopped_at: "Completed 01-10: CoverageWaypoint area_index + PlanBuilder stamping (CR-01 planner half)"
+last_updated: "2026-04-29T10:12:05.558Z"
 progress:
   total_phases: 1
   completed_phases: 0
-  total_plans: 9
-  completed_plans: 8
-  percent: 95
+  total_plans: 11
+  completed_plans: 10
+  percent: 91
 ---
 
 # Project state
@@ -40,9 +40,9 @@ progress:
 
 ## Last session
 
-- **Last session:** 2026-04-29T09:30:00.000Z
-- **Stopped at:** Completed 01-09 automatable scope (T0+T1+T2); SPEC AC-13 Pi5 garden smoke pending
-- **Resume file:** `.planning/phases/01-coverage-planner-rewrite/01-09-SUMMARY.md` § "Hardware Checkpoint Procedure"
+- **Last session:** 2026-04-29T10:12:05.551Z
+- **Stopped at:** Completed 01-10: CoverageWaypoint area_index + PlanBuilder stamping (CR-01 planner half)
+- **Resume file:** None
 - **Blockers:** SPEC AC-13 — operator must execute the Pi5 Eichenau garden smoke (procedure documented in 01-09-SUMMARY.md). Until then, Phase 1 remains in "automatable complete, hardware-verified pending" state.
 
 ## Performance Metrics
@@ -58,6 +58,7 @@ progress:
 | 01    | 07   | 20min    | 2     | 22    |
 | 01    | 08   | 34min    | 2     | 13    |
 | 01    | 09   | 25min    | 3 (T0+T1+T2; T3 pending) | 7 |
+| Phase 01 P10 | 6min | 2 tasks | 9 files |
 
 ## Active branch
 

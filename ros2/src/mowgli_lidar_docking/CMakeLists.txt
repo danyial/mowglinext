@@ -60,6 +60,7 @@ add_library(mowgli_lidar_docking_lib STATIC
   src/confidence_metrics.cpp
   src/dock_approach_loader.cpp
   src/dock_scan_meta_loader.cpp
+  src/kinematic_icp_dock_matcher.cpp
 )
 
 target_include_directories(mowgli_lidar_docking_lib PUBLIC

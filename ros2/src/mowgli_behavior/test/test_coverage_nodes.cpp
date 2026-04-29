@@ -425,6 +425,85 @@ TEST_F(WriteCheckpointAreaIndexTest, PersistsCanonicalAreaIndex)
       << "BT must not echo sequence_id (3) into area_index";
   EXPECT_DOUBLE_EQ(captured_[0].last_mow_angle_deg, 42.5)
       << "BT must propagate ctx->last_mow_angle_used_deg, not 0.0";
+
+  // WR-01 regression guard: swath indices must be per-area counts, not
+  // plan-wide offsets. Plan = [UNDOCK0, UNDOCK1, MOW2, MOW3, DOCK4, DOCK5]:
+  // area 1 has exactly 1 mowing pair (2 waypoints), so completed_mow_pairs=1.
+  // Pre-fix bug: current_swath_index = completed_end_idx_exclusive-1 = 3
+  // (plan-wide index), causing resume to skip 2*3=6 mowing waypoints —
+  // skipping the entire single-swath area and landing at RETURN_TO_DOCK.
+  EXPECT_EQ(captured_[0].current_swath_index, 1u)
+      << "WR-01: current_swath_index must be the per-area mowing-pair count "
+         "(1), not the plan-wide index (3)";
+  EXPECT_EQ(captured_[0].last_completed_swath_index, 0u)
+      << "WR-01: last_completed_swath_index must be completed_pairs-1 (0) "
+         "for a 1-pair area";
+  EXPECT_EQ(captured_[0].next_open_swath_index, 1u)
+      << "WR-01: next_open_swath_index must equal current_swath_index (1)";
+
+  // WR-02 regression guard: current_outline_index must NOT snap back to 0
+  // after the first mowing pair completes. The plan has no OUTLINE_* waypoints
+  // for area 1 (outlines were already mowed before mowing in this synthetic
+  // plan), so outline is done: current_outline_index must be 0 for a plan
+  // with no OUTLINE waypoints (no outline pass started, so no pass completed).
+  // The real WR-02 case is tested by PersistsOutlineIndexAfterMowing below.
+  EXPECT_EQ(captured_[0].current_outline_index, 0u)
+      << "WR-02: current_outline_index must be 0 for an area with no outline "
+         "waypoints (no outline pass was emitted for this synthetic plan)";
+}
+
+// ---------------------------------------------------------------------------
+// Test 7 — WR-02 regression guard: current_outline_index must be sticky
+// (= 1) after the outline pass completes and mowing begins.
+// ---------------------------------------------------------------------------
+
+TEST_F(WriteCheckpointAreaIndexTest, PersistsOutlineIndexAfterMowing)
+{
+  // Plan: UNDOCK0(kNoArea), OUTLINE1(area=1), OUTLINE2(area=1),
+  //       MOW3(area=1), MOW4(area=1), DOCKING5(kNoArea).
+  // The outline block (wp 1+2) is followed by the mowing pair (wp 3+4).
+  // After dispatching completed_end_idx_exclusive=5 (both mowing wps done),
+  // current_outline_index must be 1 (outline pass complete — not 0).
+  constexpr std::uint32_t kNoArea = std::numeric_limits<std::uint32_t>::max();
+  std::vector<CW> p;
+  auto mk = [](std::uint32_t seq, std::uint32_t area, std::uint8_t st) {
+    CW wp;
+    wp.sequence_id = seq;
+    wp.area_index = area;
+    wp.segment_type = st;
+    wp.pose.header.frame_id = "map";
+    wp.pose.pose.orientation.w = 1.0;
+    return wp;
+  };
+  p.push_back(mk(0, kNoArea, CW::SEGMENT_UNDOCK));
+  p.push_back(mk(1, 1u, CW::SEGMENT_OUTLINE_WORKING_AREA));
+  p.push_back(mk(2, 1u, CW::SEGMENT_OUTLINE_WORKING_AREA));
+  p.push_back(mk(3, 1u, CW::SEGMENT_MOWING_BOUSTROPHEDON));
+  p.push_back(mk(4, 1u, CW::SEGMENT_MOWING_BOUSTROPHEDON));
+  p.push_back(mk(5, kNoArea, CW::SEGMENT_DOCKING));
+
+  FollowCoveragePlanIntegrationTest node("FollowCoveragePlanIntegrationTest", config_);
+  node.setCoveragePlan(p);
+
+  // Dispatch after completing mowing pair (end index = 5: wps 3+4 done).
+  node.invokeDispatchCheckpointWrite(/*completed_end_idx_exclusive=*/5);
+
+  ASSERT_TRUE(wait_for_captured(1u, std::chrono::milliseconds(2000)))
+      << "no WriteCheckpoint request captured within 2 s";
+
+  std::lock_guard<std::mutex> lk(captured_mutex_);
+  ASSERT_EQ(captured_.size(), 1u);
+  EXPECT_EQ(captured_[0].area_index, 1u);
+
+  // WR-02: the outline pass completed (wps 1+2 are OUTLINE, then mowing
+  // started) so current_outline_index must be 1, not 0.
+  EXPECT_EQ(captured_[0].current_outline_index, 1u)
+      << "WR-02: current_outline_index must be 1 (outline pass done) after "
+         "mowing begins — must not snap back to 0";
+
+  // WR-01: 1 mowing pair completed.
+  EXPECT_EQ(captured_[0].current_swath_index, 1u)
+      << "WR-01: 1 mowing pair completed → current_swath_index must be 1";
 }
 
 TEST_F(WriteCheckpointAreaIndexTest, SkipsSentinelAreaIndex)

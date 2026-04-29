@@ -33,6 +33,7 @@ func MowgliNextRoutes(r *gin.RouterGroup, provider types.IRosProvider) {
 	SubscriberRoute(group, provider)
 	PublisherRoute(group, provider)
 	PreviewPlanRoute(group, provider)
+	PlanCoverageActionRoute(group, provider)
 }
 
 // PreviewPlanRoute returns 410 Gone — the legacy /map_server_node/preview_plan

@@ -51,12 +51,12 @@ var topicMap = map[string]topicDef{
 	"robotDescription":    {"/robot_description", "std_msgs/msg/String"},                       // published once
 	"recordingTrajectory": {"/behavior_tree_node/recording_trajectory", "nav_msgs/msg/Path"},   // area recording preview
 	"calibrateStatus":     {"/calibrate_imu_yaw_node/calibrate_status", "mowgli_interfaces/msg/CalibrateImuYawStatus"}, // result topic for the IMU-yaw calibration (see CalibrateImuYaw.srv for why)
-	// Synthetic heading source fused by ekf_map (robot_localization). Carries
-	// sensor_msgs/Imu with only `orientation` and `orientation_covariance[8]`
-	// populated — see cog_to_imu.py in mowgli_localization. The upstream
-	// `magYaw` ↔ /imu/mag_yaw mapping is omitted in this fork (mag pipeline
-	// removed during 2026-04-27 migration).
+	// Synthetic heading sources fused by ekf_map (robot_localization). Both
+	// carry sensor_msgs/Imu with only `orientation` and
+	// `orientation_covariance[8]` populated — see cog_to_imu.py and
+	// mag_yaw_publisher.py in mowgli_localization.
 	"cogHeading":          {"/imu/cog_heading", "sensor_msgs/msg/Imu"},
+	"magYaw":              {"/imu/mag_yaw", "sensor_msgs/msg/Imu"},
 }
 
 // ---------------------------------------------------------------------------

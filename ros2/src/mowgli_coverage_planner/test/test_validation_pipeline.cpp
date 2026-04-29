@@ -141,13 +141,14 @@ TEST(ValidationPipeline, RejectsAreaTooNarrowWhenSkip)
 }
 
 // ERROR_OBSTACLE_BLOCKS_AREA: working area whose obstacles cover the entire
-// fittable interior.
+// fittable interior. Obstacle is slightly larger than the area so every
+// area vertex is strictly inside the obstacle polygon (point_in_polygon's
+// ray-cast is non-deterministic on edges).
 TEST(ValidationPipeline, RejectsObstacleBlockingArea)
 {
   PlanContext ctx = make_minimal_ctx();
   auto area = make_working_area(make_square(0.0, 0.0, 5.0));
-  // Obstacle covering the whole interior.
-  area.obstacles.push_back(make_square(0.0, 0.0, 5.0));
+  area.obstacles.push_back(make_square(0.0, 0.0, 6.0));
   ctx.areas.push_back(area);
 
   ValidatorPipeline pipe;

@@ -44,6 +44,7 @@ add_library(mowgli_coverage_planner_lib STATIC
   src/plan_builder/outline_generator.cpp
   src/plan_builder/boustrophedon_sweeper.cpp
   src/plan_builder/narrow_area_strategy.cpp
+  src/plan_builder/plan_builder.cpp
 )
 
 target_include_directories(mowgli_coverage_planner_lib PUBLIC

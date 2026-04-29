@@ -24,7 +24,9 @@
 #include <mowgli_interfaces/srv/write_checkpoint.hpp>
 
 #include "mowgli_coverage_planner/checkpoint_io.hpp"
+#include "mowgli_coverage_planner/plan_builder.hpp"
 #include "mowgli_coverage_planner/plan_context.hpp"
+#include "mowgli_coverage_planner/validators.hpp"
 
 // Plan 01-05 ships the skeleton wiring. The Checkpoint key=value serializer
 // + WriteCheckpoint handler implementation lands in checkpoint_io.cpp and
@@ -235,9 +237,15 @@ bool CoveragePlannerNode::fetch_all_areas(
 }
 
 // ---------------------------------------------------------------------------
-// execute() — phase pipeline. Plan 01-07 will replace the PLAN-07-PLACEHOLDER
-// tail with the validator pipeline + plan builder. The skeleton here is
-// fully functional for the empty-areas + invalid-geometry paths.
+// execute() — phase pipeline.
+//   1. Robot-geometry validation (D-09).
+//   2. Snapshot pull of all areas via /map_server_node/get_all_areas.
+//   3. Cancel-fast.
+//   4. ERROR_NO_AREAS guard (SPEC R-12).
+//   5. Pre-geometry ValidatorPipeline (SPEC R-12 fail-fast).
+//   6. PlanBuilder: UNDOCK + per-area outlines/sweep/narrow + dock segments.
+//   7. Post-geometry ValidatorPipeline (T-07-07 / T-07-08 mitigations).
+//   8. Build result + PlanMetadata; succeed.
 // ---------------------------------------------------------------------------
 
 void CoveragePlannerNode::execute(std::shared_ptr<GoalHandle> goal_handle)
@@ -300,26 +308,76 @@ void CoveragePlannerNode::execute(std::shared_ptr<GoalHandle> goal_handle)
     return;
   }
 
-  // 5. PLAN-07-PLACEHOLDER -----------------------------------------------------
-  //    Plan 01-07 replaces everything from here through the goal_handle->succeed
-  //    call below with the validator pipeline + outline generator + boustrophedon
-  //    sweep + narrow-area strategies + plan-metadata population. Until then we
-  //    short-circuit with ERROR_INTERNAL so the action plumbing is still observable
-  //    end-to-end (the GUI / BT can render a structured failure rather than a
-  //    timeout). Plan 01-07's task can grep for PLAN-07-PLACEHOLDER to find this
-  //    block cleanly.
+  // 5. Pre-geometry validation pipeline (SPEC R-12, fail-fast).
+  ValidatorPipeline pre_geom;
+  pre_geom.add_pre_geometry_validators();
+  if (auto err = pre_geom.run(ctx))
   {
     result->success = false;
-    PlanError err;
-    err.error_code = PlanError::ERROR_INTERNAL;
-    err.human_readable =
-        "Plan builder not yet implemented (Plan 01-07 lands this)";
-    result->error = err;
+    result->error = *err;
+    RCLCPP_WARN(get_logger(), "Pre-geometry validation rejected plan: %s",
+                err->human_readable.c_str());
     goal_handle->succeed(result);
     planning_active_.store(false);
     return;
   }
-  // ----------------------------------------------- PLAN-07-PLACEHOLDER end ---
+
+  // 6. Plan build: UNDOCK -> per-area outlines + sweep + narrow strategies
+  //    -> RETURN_TO_DOCK -> DOCK_APPROACH -> DOCKING.
+  PlanBuilder builder(robot_, areas_dir_);
+
+  feedback->progress_percent = 25.0F;
+  feedback->phase = "outlines_generated";
+  goal_handle->publish_feedback(feedback);
+
+  if (!builder.build(ctx))
+  {
+    result->success = false;
+    result->error = ctx.error.value_or(PlanError{});
+    RCLCPP_WARN(get_logger(), "PlanBuilder failed: %s",
+                result->error.human_readable.c_str());
+    goal_handle->succeed(result);
+    planning_active_.store(false);
+    return;
+  }
+
+  feedback->progress_percent = 75.0F;
+  feedback->phase = "swaths_generated";
+  goal_handle->publish_feedback(feedback);
+
+  // 7. Post-geometry validation pipeline (SPEC R-12 + T-07-07 / T-07-08).
+  ValidatorPipeline post_geom;
+  post_geom.add_post_geometry_validators();
+  if (auto err = post_geom.run(ctx))
+  {
+    result->success = false;
+    result->error = *err;
+    RCLCPP_WARN(get_logger(), "Post-geometry validation rejected plan: %s",
+                err->human_readable.c_str());
+    goal_handle->succeed(result);
+    planning_active_.store(false);
+    return;
+  }
+
+  feedback->progress_percent = 95.0F;
+  feedback->phase = "validation_passed";
+  goal_handle->publish_feedback(feedback);
+
+  // 8. Build the result + metadata.
+  result->success = true;
+  result->plan = ctx.plan;
+  result->metadata.mow_angle_used_deg = ctx.mow_angle_used_deg;
+  result->metadata.outline_passes_used = robot_.outline_passes;
+  result->metadata.path_spacing_used = robot_.tool_width - robot_.strip_overlap;
+  result->metadata.processed_area_indices = ctx.processed_area_indices;
+  result->metadata.skipped_area_indices = ctx.skipped_area_indices;
+  result->metadata.skip_reasons = ctx.skip_reasons;
+  result->metadata.warnings = ctx.warnings;
+  // checkpoint_seed: zero-initialized for fresh runs; on resume, the caller
+  // (BT FollowCoveragePlan) will read the per-area .kv files itself before
+  // executing each area.
+  goal_handle->succeed(result);
+  planning_active_.store(false);
 }
 
 // ---------------------------------------------------------------------------

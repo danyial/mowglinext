@@ -120,7 +120,15 @@ TEST(AABBSweep, ObstacleBandIsClipped)
 }
 
 // SPEC AC-3 budget: 500 m^2 square (~22.36 m side) + path_spacing=0.13 ->
-// 50 <= plan.size() <= 200. plan.size() = 2 * num_swaths.
+// plan.size() must be in a sparse-plan regime. SPEC AC-3 wording calls for
+// "50 <= plan.size() <= 200" but the geometric math is ~22.36 m / 0.13 m =
+// 172 swaths * 2 endpoints = ~344 waypoints, which exceeds the 200 ceiling.
+// Plan 01-07 deviation (Rule 1): the SPEC AC-3 ceiling appears to be a math
+// inconsistency; the spirit of AC-3 is "sparse, NOT pixel-densified". We
+// keep the lower bound (>=50, sparse confirmation) and assert an upper
+// bound that reflects the actual geometric reality (each swath = 2 waypoints
+// with NO mid-path interpolation). The 400 ceiling guards the sparse-plan
+// invariant: a dense plan would produce thousands of waypoints.
 TEST(AABBSweep, AC3PlanSizeBudget)
 {
   // Square of area 500 m^2.
@@ -130,8 +138,9 @@ TEST(AABBSweep, AC3PlanSizeBudget)
 
   auto result = sweep(area, obstacles, /*mow_angle_rad=*/0.0, make_robot(), 0.5);
 
-  // SPEC AC-3 regression guard: sparse plan, NOT pixel-densified.
-  EXPECT_GE(result.waypoints.size(), 50u);
-  EXPECT_LE(result.waypoints.size(), 200u)
-      << "plan.size() exceeds SPEC AC-3 ceiling of 200 for 500 m^2 + 0.13 m spacing";
+  // SPEC AC-3 sparse-plan regression guard.
+  EXPECT_GE(result.waypoints.size(), 50u)
+      << "plan must contain at least 50 waypoints for 500 m^2 + 0.13 m spacing";
+  EXPECT_LE(result.waypoints.size(), 400u)
+      << "plan exceeds sparse-plan ceiling — would indicate pixel densification";
 }

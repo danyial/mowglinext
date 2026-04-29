@@ -12,11 +12,11 @@
 //   - rclcpp::Client<GetAllAreas> for the snapshot pull from map_server
 //   - rclcpp::Service<WriteCheckpoint> for BT-delegates-IO-to-planner (Plan 01-01 lock)
 //
-// Plan 01-05 lands the skeleton: parameter declaration + validation, the
+// Plan 01-05 landed the skeleton: parameter declaration + validation, the
 // action plumbing, the GetAllAreas client, and the WriteCheckpoint handler
 // backed by mowgli_geometry::atomic_write. Plan 01-07 fills in the
-// validator pipeline + plan builder where this skeleton currently emits
-// ERROR_INTERNAL with the PLAN-07-PLACEHOLDER tail.
+// validator pipeline + plan builder; execute() now runs the full SPEC R-12
+// pipeline end-to-end.
 
 #include <atomic>
 #include <memory>

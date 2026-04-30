@@ -1,9 +1,9 @@
 ---
 phase: 02-lidar-dock-pose-estimation
-status: pending-pi5-hardware
+status: gaps-found
 created: 2026-04-30
-last_updated: 2026-04-30
-score: pending (automatable scope COMPLETE; Pi5 5-of-5 hardware UAT pending)
+last_updated: 2026-04-30T09:30:00Z
+score: 9/13 packages green; 1 build gap blocks downstream verification
 ---
 
 # Phase 2 — LiDAR Dock Pose Estimation: Verification Report
@@ -121,3 +121,110 @@ score: pending (automatable scope COMPLETE; Pi5 5-of-5 hardware UAT pending)
 This report is intentionally a `pending`-heavy matrix. The verifier
 (`/gsd-verify-phase 2`) is responsible for flipping individual rows to
 `✓ VERIFIED` with commit-hash evidence as the underlying gates close.
+
+---
+
+## Build Gaps (added 2026-04-30 by phase-end podman build run)
+
+The phase-end podman build (`podman build --target build` against
+`feat/mag-pipeline-resurrect` HEAD `0e8b2038`) executed in two cycles
+and surfaced gaps that gap-closure planning (`/gsd-plan-phase 2 --gaps`)
+must address. **Detailed root-cause + fix paths in `deferred-items.md`
+§ "From phase-end podman build (post Plan 02-08)".**
+
+### GAP-01: ✅ FIXED — `libsophus-dev` package does not exist on Ubuntu Noble arm64
+
+- **Source plan:** 02-01 (RESEARCH §Standard Stack apt list)
+- **File:** `ros2/Dockerfile`
+- **Symptom:** apt failed with `E: Unable to locate package libsophus-dev`
+- **Fix:** commit `0e8b2038` replaced `libsophus-dev` with `ros-kilted-sophus`
+- **Verified:** second podman build cycle passed Stage 1 apt-install cleanly
+- **Status:** ✓ resolved (no gap-closure plan needed)
+
+### GAP-02: 🔴 OPEN — `mowgli_lidar_docking` cannot reach `kinematic_icp` + `kiss_icp` C++ headers
+
+This is the gap-closure plan's primary target.
+
+- **Source plans:** 02-02 (CMakeLists — package skeleton), 02-04 (CMakeLists — production matcher)
+- **Files:** `ros2/src/mowgli_lidar_docking/CMakeLists.txt`,
+  `include/mowgli_lidar_docking/kinematic_icp_dock_matcher.hpp`,
+  `src/confidence_metrics.cpp`, `src/kinematic_icp_dock_matcher.cpp`,
+  `src/dock_scan_match_node.cpp`, `src/main.cpp`
+- **Build symptom (verbatim):**
+  ```
+  fatal error: kinematic_icp/pipeline/KinematicICP.hpp: No such file or directory
+  fatal error: kiss_icp/core/VoxelHashMap.hpp: No such file or directory
+  Failed   <<< mowgli_lidar_docking [8.16s, exited with code 2]
+  Summary: 9 packages finished
+    1 package failed: mowgli_lidar_docking
+    3 packages not processed: mowgli_behavior, mowgli_simulation, mowgli_bringup
+  ```
+- **Root cause:** the kinematic_icp ROS package (PRBonn upstream submodule)
+  builds the cpp library targets via `add_subdirectory(... cpp/kinematic_icp)`
+  inside `ros2/src/kinematic_icp/ros/CMakeLists.txt`, but neither installs the
+  cpp/ headers nor `ament_export_*`-es them. `ament_target_dependencies(...
+  kinematic_icp)` in `mowgli_lidar_docking/CMakeLists.txt` therefore propagates
+  only the ROS-wrapper headers (`include/kinematic_icp_ros/...`), not the
+  C++ library headers our code includes (`kinematic_icp/pipeline/KinematicICP.hpp`,
+  `kiss_icp/core/VoxelHashMap.hpp`).
+- **Plan 02-02 PROBE.md flagged this** (lines 47-52 verbatim):
+  > "target_include_directories must reference the FetchContent build path,
+  > NOT a static path under `ros2/src/kinematic_icp/`. Standard idiom is to
+  > depend on the kiss_icp CMake target (e.g.
+  > `target_link_libraries(... PRIVATE kiss_icp::core)`) which kiss_icp's
+  > `cpp/kiss_icp/CMakeLists.txt` is expected to export. If Plan 02-02 needs
+  > the raw include path, use `${kiss_icp_SOURCE_DIR}/cpp/kiss_icp` (set by
+  > FetchContent)."
+  
+  Plan 02-02 + Plan 02-04 executors ignored this and used the naive ament
+  pattern. The gap-closure plan must finish what PROBE.md started.
+- **Affected requirements (cannot pass until GAP-02 closes):**
+  R-2 (publisher rate gtest), R-3 (confidence trip gtests), R-7 (FineDock
+  e2e + hardware), R-8 (cmd_vel=0 abort gtest), R-12 (PreUndockClearanceCheck
+  gtest), R-13 (PostUndockRtkValidation gtest) — every requirement whose
+  test binary is in `mowgli_lidar_docking`, `mowgli_behavior` (depends on
+  it), or `mowgli_simulation` (depends transitively).
+- **Verified-good packages from same build (do NOT regress):**
+  mowgli_geometry, mowgli_interfaces (with new `DockMatchConfidence.msg`),
+  mowgli_nav2_plugins, mowgli_localization (with Plan 02-03 + 02-05
+  changes), mowgli_coverage_planner, mowgli_hardware (with Plan 02-01
+  shared key=value parser migration), mowgli_monitoring, mowgli_map (same
+  migration), kinematic_icp (PRBonn upstream submodule).
+- **Suggested fix paths** (gap-closure plan author picks one):
+  - **(A) Self-FetchContent + add_subdirectory in `mowgli_lidar_docking`** —
+    replicate the kinematic_icp ros pattern. In `mowgli_lidar_docking/CMakeLists.txt`,
+    add `FetchContent_Declare(kiss_icp URL https://github.com/PRBonn/kiss-icp/archive/refs/tags/v1.2.0.tar.gz SOURCE_SUBDIR cpp/kiss_icp)`
+    matching the version pinned by `ros2/src/kinematic_icp/cpp/kinematic_icp/kiss_icp/kiss-icp.cmake`,
+    plus `add_subdirectory(${CMAKE_SOURCE_DIR}/../kinematic_icp/cpp/kinematic_icp ${CMAKE_CURRENT_BINARY_DIR}/kinematic_icp_cpp_for_mowgli)`
+    to build the cpp lib in-tree. CMake target name conflicts (the same
+    targets exist in kinematic_icp's build) must be resolved via
+    `EXCLUDE_FROM_ALL` and scoped subdirectory naming. Adds ~3-5 min to
+    the build but keeps `mowgli_lidar_docking` self-contained and avoids
+    forking the upstream submodule.
+  - **(B) Patch the `kinematic_icp` submodule** to install + ament_export
+    the cpp headers and library targets. Cleaner long-term but introduces
+    fork-maintenance burden against PRBonn upstream. Needs a `.gitmodules`
+    URL change to point at our fork, and the patch series upstreamed to
+    PRBonn for sustainability.
+  - **(C) Vendor minimum kiss_icp + kinematic_icp headers** into
+    `mowgli_lidar_docking/third_party/`. Hacky; loses upstream fix tracking;
+    NOT recommended unless A and B both fail.
+- **Acceptance criterion for GAP-02 closure:**
+  ```bash
+  cd ros2 && podman build --target build -t mowgli-phase2:test .
+  # Must complete with: Successfully built {hash}
+  # AND: mowgli_lidar_docking, mowgli_behavior, mowgli_simulation,
+  # mowgli_bringup all in the "Finished <<<" list
+  # AND: 0 packages failed; 0 packages not processed.
+  ```
+- **Cross-reference:** see `deferred-items.md` § "From phase-end podman
+  build (post Plan 02-08)" for the verbatim build log excerpt.
+
+The gap-closure plan author should:
+1. Pick path A (recommended), B, or C.
+2. Update `mowgli_lidar_docking/CMakeLists.txt` and (if needed) `package.xml`.
+3. Author a single new plan file (likely `02-09-PLAN.md`) with `gap_closure: true`
+   in frontmatter, that re-builds the failed packages and verifies all 13 packages
+   build green via `podman build --target build`.
+4. Stop short of running the actual build — the executor handles that under
+   the operator's "Code-only Commits, podman-Build am Phasen-Ende" decision.

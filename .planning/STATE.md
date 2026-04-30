@@ -2,35 +2,35 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: gap-closure-needed
-stopped_at: Phase-end podman build ran; mowgli_lidar_docking integration gap discovered (kinematic_icp/kiss_icp cpp headers not exported by ament)
-last_updated: "2026-04-30T09:30:00.000Z"
+status: awaiting-operator-podman-build
+stopped_at: Plan 02-09 (GAP-02 gap closure) committed — `mowgli_lidar_docking` CMakeLists.txt rewritten via add_subdirectory + kinematic_icp_pipeline link, regression smoke gtest landed. Operator must run `cd ros2 && podman build --target build -t mowgli-phase2:test .` before Pi5 5-of-5 UAT.
+last_updated: "2026-04-30T00:00:00.000Z"
 progress:
   total_phases: 2
   completed_phases: 1
-  total_plans: 19
-  completed_plans: 18
-  percent: 95
+  total_plans: 20
+  completed_plans: 20
+  percent: 100
 ---
 
 # Project state
 
 ## Current phase
 
-2 — LiDAR Dock Pose Estimation (Wave 1-3 complete + Wave 4 Plan 02-07 complete; Plan 02-08 e2e + Pi5 hardware smoke remaining)
+2 — LiDAR Dock Pose Estimation (all 9 plans automatable-complete; awaiting operator phase-end podman build + Pi5 5-of-5 hardware UAT)
 
 ## Current Plan
 
-02-08 — Sim publisher + e2e + monitor + Pi5 checklist (🟡 AUTOMATABLE COMPLETE; T1+T2 ✅ commits `ba9647de`, `9d0fd50c`, `5544c763`; SUMMARY at `.planning/phases/02-lidar-dock-pose-estimation/02-08-SUMMARY.md`. T3 ⬜ Pi5 5-of-5 hardware UAT pending operator verification per `02-08-PI5-CHECKLIST.md`. D-14 sim publisher + sim_lidar_docking.launch.py + e2e_test `_run_fine_dock_phase` + D-15 mow_session_monitor `dock_match.*` + `lateral_error_at_contact` fields + 02-VERIFICATION.md acceptance matrix. Phase 2 closure blocked on operator running PI5-CHECKLIST + committing 02-08-PI5-RESULTS.md.)
+02-09 — GAP-02 gap closure (✅ COMPLETE; commits `7470b60d` fix CMake, `10f722a6` regression gtest, `aa7724ac` SUMMARY). `mowgli_lidar_docking/CMakeLists.txt` now `add_subdirectory`s the kinematic_icp cpp tree under `EXCLUDE_FROM_ALL` + scoped binary dir, links explicitly against `kinematic_icp_pipeline` STATIC. New gtest `test_kinematic_icp_headers_reachable` pins the linkage so future CMake "simplifications" fail loudly. PRBonn submodule byte-identical (Architecture Invariant respected). Phase-end podman build deferred-to-operator.
 
 ## Total Plans
 
-19 (Phase 1: 11 plans, Phase 2: 8 plans)
+20 (Phase 1: 11 plans, Phase 2: 9 plans)
 
 ## Resume point
 
-- **Last completed step:** Phase-end podman build (`podman build --target build`) executed twice on `feat/mag-pipeline-resurrect`: first run failed with `libsophus-dev` not found; commit `0e8b2038` swapped to `ros-kilted-sophus`; second run got 9/13 packages green (mowgli_geometry, mowgli_interfaces, mowgli_nav2_plugins, mowgli_localization, mowgli_coverage_planner, mowgli_hardware, mowgli_monitoring, mowgli_map, kinematic_icp) but failed at mowgli_lidar_docking — Plan 02-02/02-04 CMakeLists assumed `ament_target_dependencies(... kinematic_icp)` propagates the cpp/ headers; it does not. Plan 02-02 PROBE.md (lines 47-52) had flagged this exact integration risk. Three packages not processed: mowgli_behavior, mowgli_simulation, mowgli_bringup.
-- **Next step:** GAP-CLOSURE PLAN required. Run `/gsd-plan-phase 2 --gaps` to author a fix plan that resolves the kinematic_icp ↔ mowgli_lidar_docking integration. Recommended approach (see `deferred-items.md` § "From phase-end podman build"): self-FetchContent kiss_icp + add_subdirectory the kinematic_icp cpp lib inside `mowgli_lidar_docking/CMakeLists.txt`, with target name conflicts resolved via EXCLUDE_FROM_ALL or scoped subdirectory naming. After the gap plan executes and `podman build --target build` reaches `Successfully tagged mowgli-phase2:test`, THEN operator runs `02-08-PI5-CHECKLIST.md` on Pi5 for the 5-of-5 hardware UAT.
+- **Last completed step:** Plan 02-09 gap-closure executed end-to-end. `ros2/src/mowgli_lidar_docking/CMakeLists.txt` rewritten per VERIFICATION.md Path A: `add_subdirectory(${CMAKE_SOURCE_DIR}/../kinematic_icp/cpp/kinematic_icp ... EXCLUDE_FROM_ALL)` injected, `kinematic_icp_pipeline` added to PUBLIC link of `mowgli_lidar_docking_lib`. New regression gtest `test_kinematic_icp_headers_reachable.cpp` directly `#include`s both formerly-missing headers (`kinematic_icp/pipeline/KinematicICP.hpp` + `kiss_icp/core/VoxelHashMap.hpp`) and asserts `kiss_icp::VoxelHashMap` ctor + AddPoints/GetClosestNeighbor public API. Static-grep gates: `GREP_GATES: PASS`. PRBonn submodule untouched. Three commits land: `7470b60d`, `10f722a6`, `aa7724ac`.
+- **Next step:** Operator runs `cd ros2 && podman build --target build -t mowgli-phase2:test .` from the dev container. Build must complete with all 13 packages in `Finished <<<` list and 0 packages failed. Then operator runs `02-08-PI5-CHECKLIST.md` on Pi5 for the 5-of-5 hardware UAT. After 5-of-5 green: commit `02-08-PI5-RESULTS.md`, run `/gsd-verify-phase 2` to flip GAP-02 row in `02-VERIFICATION.md` to `✓ VERIFIED`.
 - **Auto-chain flag persisted:** yes (`workflow._auto_chain_active=true` in `.planning/config.json`)
 - **Wave 1 plans:** 01-01 ✅ COMPLETE, 01-03 ✅ COMPLETE
 - **Wave 2 plans:** 01-02 ✅ COMPLETE, 01-04 ✅ COMPLETE
@@ -41,13 +41,13 @@ progress:
 
 ## Last session
 
-- **Last session:** 2026-04-30T09:30:00.000Z
-- **Stopped at:** Phase-end build surfaced mowgli_lidar_docking integration gap (kinematic_icp/kiss_icp cpp headers not exported by ament). Gap-closure plan needed.
+- **Last session:** 2026-04-30T00:00:00.000Z
+- **Stopped at:** Plan 02-09 (GAP-02 closure) shipped. Operator must run phase-end podman build before Pi5 UAT.
 - **Resume file:** None
 - **Blockers:**
-  - **NEW — Phase 2 gap:** mowgli_lidar_docking cannot compile against kinematic_icp + kiss_icp headers. Plans 02-02 + 02-04 left an integration gap; Plan 02-02 PROBE.md flagged it (lines 47-52) but executor ignored. Full diagnosis + fix paths in `.planning/phases/02-lidar-dock-pose-estimation/deferred-items.md` § "From phase-end podman build". Resolution path: `/gsd-plan-phase 2 --gaps` → executes gap-closure plan → re-run `podman build --target build`. 9/13 packages already green incl. all Phase-1 + Plan 02-01 (key_value_parser migration) + Plan 02-03 + Plan 02-05.
+  - Phase-end podman build (`cd ros2 && podman build --target build -t mowgli-phase2:test .`) — operator-gated; must reach `Successfully tagged mowgli-phase2:test` with all 13 packages in `Finished <<<` list before Pi5 UAT can proceed.
   - SPEC AC-13 (Phase 1) — operator must still execute the Pi5 Eichenau garden 5-of-5 smoke per 01-09-SUMMARY.md.
-  - Phase 2 5-of-5 hardware UAT per `02-08-PI5-CHECKLIST.md` (R-7 / R-9 / R-11 hardware gates) — gated on the build gap above being resolved.
+  - Phase 2 5-of-5 hardware UAT per `02-08-PI5-CHECKLIST.md` (R-7 / R-9 / R-11 hardware gates) — unblocked by 02-09 once podman build is green.
 
 ## Performance Metrics
 

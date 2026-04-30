@@ -131,16 +131,38 @@ target_compile_features(mowgli_lidar_docking_lib PUBLIC cxx_std_17)
 # Sophus::Sophus and Eigen3::Eigen are header-only IMPORTED targets;
 # they propagate include paths via INTERFACE_INCLUDE_DIRECTORIES.
 #
-# PUBLIC link to kinematic_icp_pipeline propagates BOTH the
-# kinematic_icp/ cpp include path AND (via PUBLIC chain to
-# kiss_icp_pipeline -> kiss_icp_core) the kiss_icp/ cpp include path.
-# That is what fixes GAP-02. See the comment block in "Dependencies"
-# above for the full rationale.
+# kinematic_icp_pipeline is wrapped in $<BUILD_INTERFACE:...> on purpose:
+#
+#   - In the BUILD context (this colcon package's own .cpp files, our
+#     dock_scan_match executable, and the regression smoke gtest in test/),
+#     the link AND the propagated INTERFACE_INCLUDE_DIRECTORIES flow PUBLIC
+#     so that <kinematic_icp/pipeline/KinematicICP.hpp> + (transitively via
+#     kiss_icp_pipeline -> kiss_icp_core) <kiss_icp/core/VoxelHashMap.hpp>
+#     resolve. That is what fixes GAP-02.
+#
+#   - In the INSTALL context (downstream packages like mowgli_behavior that
+#     consume mowgli_lidar_docking_lib via ament's exported package config),
+#     the link is intentionally stripped because kinematic_icp_pipeline is
+#     pulled in via add_subdirectory + EXCLUDE_FROM_ALL and is therefore NOT
+#     in any install(EXPORT) set. Without the BUILD_INTERFACE wrap, CMake
+#     refuses install(EXPORT export_mowgli_lidar_docking_lib ...) with:
+#       install(EXPORT ...) includes target "mowgli_lidar_docking_lib" which
+#       requires target "kinematic_icp_pipeline" that is not in any export set.
+#     This was the failure mode of the first Plan 02-09 podman build run; the
+#     BUILD_INTERFACE wrapper is the surgical fix.
+#
+# Why this is safe for downstream consumers: mowgli_behavior only consumes
+# the kinematic_icp-FREE public headers (dock_approach_loader.hpp,
+# dock_scan_io.hpp, dock_scan_meta_loader.hpp). The kinematic_icp-bearing
+# headers (kinematic_icp_dock_matcher.hpp, dock_scan_match_node.hpp) are
+# only referenced by this package's own translation units. The static
+# archive linker pulls in object files only for referenced symbols, so
+# downstream linkers do not need to resolve kinematic_icp_pipeline symbols.
 target_link_libraries(mowgli_lidar_docking_lib PUBLIC
   Sophus::Sophus
   Eigen3::Eigen
   ${PCL_LIBRARIES}
-  kinematic_icp_pipeline
+  $<BUILD_INTERFACE:kinematic_icp_pipeline>
 )
 
 # ament dependencies — propagates include paths and downstream linkage

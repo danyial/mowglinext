@@ -41,6 +41,7 @@ import rclpy
 from geometry_msgs.msg import PoseWithCovarianceStamped, Quaternion
 from mowgli_interfaces.msg import (
     AbsolutePose,
+    DockMatchConfidence,
     HighLevelStatus,
     Status as HwStatus,
 )
@@ -50,6 +51,7 @@ from rclpy.qos import (
     HistoryPolicy,
     QoSProfile,
     ReliabilityPolicy,
+    qos_profile_sensor_data,
 )
 from sensor_msgs.msg import Imu
 
@@ -135,6 +137,25 @@ class DockYawToSetPose(Node):
             self._on_high_level_status,
             qos_reliable,
         )
+        # Phase 2 Plan 02-05 (SPEC R-4): the LiDAR scan-match published by
+        # mowgli_lidar_docking::DockScanMatchNode is the new top-priority
+        # source in the cascade. Both topics are produced by Plan 02-04;
+        # arriving without them is the existing day-1 behaviour (file or
+        # heading wins). Pose is reliable+depth=1 (matches the publisher
+        # contract — using transient_local here would silently drop msgs).
+        # Confidence uses SensorDataQoS to match the 10 Hz heartbeat.
+        self._sub_dock_match_pose = self.create_subscription(
+            PoseWithCovarianceStamped,
+            "/dock_match/pose",
+            self._on_dock_match_pose,
+            QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE),
+        )
+        self._sub_dock_match_conf = self.create_subscription(
+            DockMatchConfidence,
+            "/dock_match/confidence",
+            self._on_dock_match_conf,
+            qos_profile_sensor_data,
+        )
         self._pub_map = self.create_publisher(
             PoseWithCovarianceStamped, "/ekf_map_node/set_pose", qos_reliable
         )
@@ -156,6 +177,24 @@ class DockYawToSetPose(Node):
         self._need_to_publish = False
         self._last_publish_time = 0.0   # seconds, monotonic
         self._min_publish_period = 1.0  # 1 Hz throttle while charging
+        # Phase 2 Plan 02-05 — /dock_match cascade state. The seeder
+        # treats /dock_match/pose as the top cascade source iff
+        # _latest_dock_match_trusted is True AND the pose is fresh
+        # (age <= _dock_match_max_age_s). Otherwise the cascade falls
+        # through to the file source, then heading. Defaults are False /
+        # None so the existing file/heading day-1 behaviour is unchanged
+        # whenever Plan 02-04 is not deployed (or its matcher is in
+        # degraded mode publishing trusted=false continuously, see
+        # 02-04-SUMMARY Pitfall 6 baseline).
+        self._latest_dock_match_pose: PoseWithCovarianceStamped | None = None
+        self._latest_dock_match_pose_at = None  # rclpy.time.Time
+        self._latest_dock_match_trusted: bool = False
+        # 1 s staleness gate keeps a stale ICP from snapping the EKF after
+        # the matcher has already lost trust. Matches SPEC R-3's 1 s abort
+        # horizon (FineDock bails on trusted=false for >= 1 s).
+        self._dock_match_max_age_s = self.declare_parameter(
+            "dock_match_max_age_s", 1.0
+        ).value
         # BT high-level state cache (None until first message). When equal
         # to a value in _BLOCK_SEED_STATES, _try_publish silently no-ops.
         self._high_level_state: int | None = None
@@ -245,6 +284,68 @@ class DockYawToSetPose(Node):
     def _on_high_level_status(self, msg: HighLevelStatus) -> None:
         self._high_level_state = int(msg.state)
 
+    def _on_dock_match_pose(self, msg: PoseWithCovarianceStamped) -> None:
+        """Cache the latest /dock_match/pose for the cascade resolver.
+
+        The arrival time is stamped from the local clock (NOT msg.header
+        .stamp) because the staleness gate is about cascade freshness,
+        not sensor latency — and rclpy clock arithmetic is consistent
+        with what _resolve_yaw_source uses.
+        """
+        self._latest_dock_match_pose = msg
+        self._latest_dock_match_pose_at = self.get_clock().now()
+
+    def _on_dock_match_conf(self, msg: DockMatchConfidence) -> None:
+        """Cache the latest /dock_match/confidence.trusted gate.
+
+        The trusted bool is the only field the cascade reads — the
+        inlier_ratio and rmse_m are surfaced for diagnostics but the
+        upstream is_trusted() helper has already factored them in
+        (see Plan 02-04 SUMMARY R-3 trust gate)."""
+        self._latest_dock_match_trusted = bool(msg.trusted)
+
+    def _resolve_yaw_source(self):
+        """Return (source_label, yaw_rad, yaw_var) per SPEC R-4.
+
+        Cascade priority:
+          1. /dock_match/pose (LiDAR) — gated on trusted AND fresh
+             (age <= _dock_match_max_age_s)
+          2. dock_calibration.yaml (file) — existing
+          3. /gnss/heading (live) — existing fallback
+
+        If no source is available, returns ("none", 0.0, math.inf) and
+        the caller MUST skip the publish (existing _try_publish behaviour).
+        """
+        # ---- Priority 1: /dock_match/pose (LiDAR) ----
+        if (
+            self._latest_dock_match_trusted
+            and self._latest_dock_match_pose is not None
+            and self._latest_dock_match_pose_at is not None
+        ):
+            now = self.get_clock().now()
+            age_ns = (now - self._latest_dock_match_pose_at).nanoseconds
+            age_s = age_ns / 1e9
+            if age_s <= self._dock_match_max_age_s:
+                q = self._latest_dock_match_pose.pose.pose.orientation
+                yaw = math.atan2(2.0 * q.w * q.z, 1.0 - 2.0 * q.z * q.z)
+                # Use the published yaw variance (covariance index 35)
+                # clamped to a sensible floor so a degenerate 0-cov
+                # publisher never produces a divide-by-zero downstream.
+                yaw_var = max(
+                    float(self._latest_dock_match_pose.pose.covariance[35]),
+                    1e-4,
+                )
+                return ("lidar", yaw, yaw_var)
+        # ---- Priority 2: dock_calibration.yaml (existing) ----
+        if self._file_yaw_rad is not None:
+            return ("file", self._file_yaw_rad, self._file_yaw_var)
+        # ---- Priority 3: /gnss/heading (existing fallback) ----
+        if self._latest_heading is not None:
+            q = self._latest_heading.orientation
+            yaw = math.atan2(2.0 * q.w * q.z, 1.0 - 2.0 * q.z * q.z)
+            return ("/gnss/heading", yaw, self._yaw_var)
+        return ("none", 0.0, math.inf)
+
     def _on_status(self, msg: HwStatus) -> None:
         is_charging = bool(msg.is_charging)
 
@@ -319,11 +420,17 @@ class DockYawToSetPose(Node):
             and self._high_level_state in _BLOCK_SEED_STATES
         ):
             return
-        # We need GPS for position. Heading comes from either the
-        # dock_calibration.yaml file (preferred) or /gnss/heading (fallback).
+        # We need GPS for position. Heading comes from the cascade
+        # resolver (SPEC R-4): /dock_match/pose (trusted LiDAR) > file >
+        # /gnss/heading. The resolver returns ("none", ...) when nothing
+        # is available, in which case we skip the publish — the existing
+        # day-1 behaviour ("file or heading or skip") is preserved
+        # because adding the LiDAR source above the file branch never
+        # removes the fall-through path.
         if self._latest_gps is None:
             return
-        if self._file_yaw_rad is None and self._latest_heading is None:
+        source, yaw_rad, yaw_var = self._resolve_yaw_source()
+        if source == "none":
             return
         # Throttle to 1 Hz so the continuous-pin behaviour while charging
         # doesn't slam the EKF with a fresh state reset on every GPS sample.
@@ -332,16 +439,16 @@ class DockYawToSetPose(Node):
             return
         self._last_publish_time = now
 
-        # Resolve yaw quaternion + variance: file value takes precedence.
-        if self._file_yaw_rad is not None:
-            q = Quaternion()
-            q.w = math.cos(self._file_yaw_rad / 2.0)
-            q.z = math.sin(self._file_yaw_rad / 2.0)
-            yaw_quat = q
-            yaw_var = self._file_yaw_var
-        else:
-            yaw_quat = self._latest_heading.orientation
-            yaw_var = self._yaw_var
+        # Build the yaw quaternion from the cascade-resolved yaw_rad. The
+        # file source historically built the quaternion inline here; the
+        # heading source historically reused msg.orientation. Going via
+        # yaw_rad for all three sources keeps the publish payload
+        # uniform (and the log line below already extracts yaw via the
+        # same atan2 formula — no precision loss).
+        q = Quaternion()
+        q.w = math.cos(yaw_rad / 2.0)
+        q.z = math.sin(yaw_rad / 2.0)
+        yaw_quat = q
 
         # Common covariance: tight on x/y/yaw, loose on z/roll/pitch so the
         # filter keeps its prior on the states we are not setting.
@@ -383,14 +490,21 @@ class DockYawToSetPose(Node):
 
         self._need_to_publish = False
 
-        # Extract yaw from the quaternion we just published for logging.
-        yaw = math.atan2(2.0 * yaw_quat.w * yaw_quat.z,
-                         1.0 - 2.0 * yaw_quat.z * yaw_quat.z)
-        source = "file" if self._file_yaw_rad is not None else "/gnss/heading"
+        # Logging contract: every publish carries a `source=<label>` token
+        # so operators can grep /rosout to see which cascade rung fired.
+        # Example log lines (operator grep targets):
+        #   ... source=lidar yaw=0.523 var=0.0010 map=(...) ...
+        #   ... source=file yaw=0.250 var=0.0300 map=(...) ...
+        #   ... source=/gnss/heading yaw=0.420 var=0.1000 map=(...) ...
+        # Labels are exactly {"lidar", "file", "/gnss/heading"} — pinned
+        # by test_dock_yaw_seeder_cascade.
+        yaw = yaw_rad
         self.get_logger().info(
-            "published dock set_pose ({}): map=({:.3f}, {:.3f}) yaw={:.1f}°, "
-            "odom=(0, 0) yaw={:.1f}°".format(
+            "published dock /set_pose source={} yaw={:.3f} var={:.4f} "
+            "map=({:.3f}, {:.3f}) yaw={:.1f}° odom=(0, 0) yaw={:.1f}°".format(
                 source,
+                yaw,
+                yaw_var,
                 map_seed.pose.pose.position.x,
                 map_seed.pose.pose.position.y,
                 math.degrees(yaw),

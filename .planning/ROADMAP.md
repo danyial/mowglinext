@@ -67,7 +67,7 @@ Plans:
 
 **Acceptance:** End-to-end COMMAND_START → undock → mow → return → autodock with `is_charging` engaged on first attempt at lateral error < 2 cm and yaw error < 1°.
 
-**Plans:** 8 plans
+**Plans:** 9 plans (8 standard + 1 gap-closure)
 
 Plans:
 - [x] 02-01-PLAN.md — Bootstrap: kinematic_icp submodule init + Dockerfile deps (laser_geometry/PCL/sophus) + DockMatchConfidence.msg + 4-pipeline codegen + mowgli_geometry::key_value_parser shared promotion + kiss_icp VoxelHashMap public-API probe (PROBE.md) → SUMMARY at `.planning/phases/02-lidar-dock-pose-estimation/02-01-SUMMARY.md` (commits `026fa024`, `e41e8534`, `ce00312f`)
@@ -78,6 +78,7 @@ Plans:
 - [x] 02-06-PLAN.md — 5 new BT nodes (RecordDockApproachPose / ApproachDock / FineDock / PreUndockClearanceCheck / PostUndockRtkValidation) + BTContext extension + factory registration + 13 gtests (R-5..R-9, R-11..R-13) → SUMMARY at `.planning/phases/02-lidar-dock-pose-estimation/02-06-SUMMARY.md` (commits `bca150c8`, `d38fa39b`)
 - [x] 02-07-PLAN.md — main_tree.xml migration (6 DockRobot sites + UndockSequence extension) + GUI Dock-card extension (useDockMatch hook + DockMatchCard component + topicMap relay per D-12) (R-5, R-9, R-10, R-11, R-12, R-13) → SUMMARY at `.planning/phases/02-lidar-dock-pose-estimation/02-07-SUMMARY.md` (commits `0513f352`, `57d91972`)
 - [~] 02-08-PLAN.md — Sim infrastructure (synthetic_scan_kicp_publisher + sim_lidar_docking.launch.py + e2e_test extension) + mow_session_monitor extension (D-15) + 02-VERIFICATION.md + Pi5 5-of-5 hardware acceptance checkpoint (operator-gated, autonomous: false). **Automatable scope COMPLETE** (Tasks 1+2; commits `ba9647de`, `9d0fd50c`, `5544c763`; SUMMARY at `.planning/phases/02-lidar-dock-pose-estimation/02-08-SUMMARY.md`). **Task 3 Pi5 hardware UAT ⬜ pending operator verification** — runbook at `.planning/phases/02-lidar-dock-pose-estimation/02-08-PI5-CHECKLIST.md`; results land in `02-08-PI5-RESULTS.md`.
+- [ ] 02-09-PLAN.md — Gap closure: rewrite mowgli_lidar_docking/CMakeLists.txt to add_subdirectory the kinematic_icp cpp tree + link explicitly against kinematic_icp_pipeline (Path A from VERIFICATION.md GAP-02). Resolves the kinematic_icp/pipeline/KinematicICP.hpp + kiss_icp/core/VoxelHashMap.hpp `No such file` build failure that blocked the phase-end podman build. Adds a regression smoke gtest (test_kinematic_icp_headers_reachable) so future CMakeLists simplifications fail loudly. Frontmatter: `gap_closure: true`, `wave: 0`, R-2/R-3/R-7/R-8/R-12/R-13. Operator runs `cd ros2 && podman build --target build -t mowgli-phase2:test .` after this lands; the build must reach `Successfully tagged` with all 13 packages in the `Finished <<<` list before Pi5 5-of-5 hardware UAT can proceed.
 
 ### Phase 3 — Smooth outline-pass transitions (≤30° tangent change)
 

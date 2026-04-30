@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: unknown
-stopped_at: Completed 02-04-PLAN.md (KinematicIcpDockMatcher + dock_scan_match node, R-2 + R-3 met)
-last_updated: "2026-04-29T21:57:50.720Z"
+stopped_at: Completed 02-05-PLAN.md (cascade extension SPEC R-4)
+last_updated: "2026-04-30T05:25:53.382Z"
 progress:
   total_phases: 2
   completed_phases: 1
   total_plans: 19
-  completed_plans: 15
-  percent: 79
+  completed_plans: 16
+  percent: 84
 ---
 
 # Project state
@@ -41,8 +41,8 @@ progress:
 
 ## Last session
 
-- **Last session:** 2026-04-29T21:57:15.687Z
-- **Stopped at:** Completed 02-04-PLAN.md (KinematicIcpDockMatcher + dock_scan_match node, R-2 + R-3 met)
+- **Last session:** 2026-04-30T05:25:44.622Z
+- **Stopped at:** Completed 02-05-PLAN.md (cascade extension SPEC R-4)
 - **Resume file:** None
 - **Blockers:** SPEC AC-13 — operator must execute the Pi5 Eichenau garden smoke (procedure documented in 01-09-SUMMARY.md). Until then, Phase 1 remains in "automatable complete, hardware-verified pending" state. Phase 2 builds + colcon tests are deferred to phase-end podman build (host = macOS, no colcon).
 
@@ -65,6 +65,7 @@ progress:
 | Phase 02 P02 | 32 | 2 tasks | 17 files |
 | Phase 02 P03 | 38 | 2 tasks | 7 files |
 | Phase 02 P04 | 35 | 2 tasks | 11 files |
+| Phase 02 P05 | 25 | 1 tasks | 3 files |
 
 ## Active branch
 

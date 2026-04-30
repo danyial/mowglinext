@@ -495,15 +495,45 @@ void DockScanMatchNode::tick()
   }
 
   // Project LaserScan -> Eigen points in the lidar frame.
+  //
+  // GH #78: filter non-finite points BEFORE handing the frame to
+  // KinematicICP. The LD19 driver publishes NaN ranges for out-of-range
+  // returns, which `laser_geometry::projectLaser` faithfully turns into
+  // NaN x/y/z point coordinates. kinematic_icp::RegisterFrame internally
+  // calls Sophus::SO3::exp on a tangent derived from the points; a
+  // single NaN propagates and trips a Sophus `ensure` that calls
+  // std::abort with no recoverable hook — the matcher process SIGABRT's
+  // with no docker-logs trace beyond a one-line Sophus assertion.
+  //
+  // The previously-deployed config (`/scan_kicp`) avoided this because
+  // `kinematic_icp_scan_frame_relay` (mowgli_localization) filters NaN
+  // before re-publishing. Switching the matcher to /scan (per #77)
+  // removed that incidental filter, which is what surfaced this latent
+  // gap.
   sensor_msgs::msg::PointCloud2 pc2;
   projector_.projectLaser(*scan, pc2, -1.0,
                           laser_geometry::channel_option::Timestamp);
   std::vector<Eigen::Vector3d> frame;
   frame.reserve(pc2.height * pc2.width);
   sensor_msgs::PointCloud2ConstIterator<float> it(pc2, "x");
+  size_t dropped_nonfinite = 0;
   for (size_t i = 0; i < pc2.height * pc2.width; ++i, ++it)
   {
-    frame.emplace_back(it[0], it[1], it[2]);
+    const float x = it[0];
+    const float y = it[1];
+    const float z = it[2];
+    if (!std::isfinite(x) || !std::isfinite(y) || !std::isfinite(z))
+    {
+      ++dropped_nonfinite;
+      continue;
+    }
+    frame.emplace_back(x, y, z);
+  }
+  if (dropped_nonfinite > 0)
+  {
+    RCLCPP_DEBUG_THROTTLE(get_logger(), *get_clock(), 10000,
+                          "dropped %zu non-finite points from /scan",
+                          dropped_nonfinite);
   }
 
   // Lookup lidar_to_base (static — base_footprint_wheels -> scan frame_id).

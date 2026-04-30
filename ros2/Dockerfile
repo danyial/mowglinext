@@ -42,8 +42,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ros-kilted-pcl-conversions \
     ros-kilted-pcl-ros \
     libpcl-dev \
-    # Sophus SE3 group (transitive kiss_icp dependency for KinematicICP)
-    libsophus-dev \
+    # Sophus SE3 group (transitive kiss_icp dependency for KinematicICP).
+    # libsophus-dev does not exist in the Ubuntu Noble apt repo for arm64;
+    # the ROS2 distribution ships its own packaged Sophus headers.
+    ros-kilted-sophus \
     # Diagnostics
     ros-kilted-diagnostic-msgs \
     ros-kilted-diagnostic-updater \

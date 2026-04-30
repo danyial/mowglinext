@@ -564,7 +564,42 @@ void DockScanMatchNode::tick()
     return;
   }
 
+  // GH #78: validate the SE3s + frame BEFORE handing them to
+  // kinematic_icp::RegisterFrame. Sophus's `ensure` macro calls
+  // std::abort() directly on any non-finite tangent — uncatchable, so
+  // we have to refuse the call ourselves. The frame-level NaN filter
+  // above handles raw LiDAR NaN; this catches the two SE3s + a final
+  // frame.empty() guard.
+  if (frame.empty())
+  {
+    RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 5000,
+                         "live frame empty after non-finite filter; "
+                         "publishing not_trusted");
+    publish_not_trusted();
+    return;
+  }
+  if (!lidar_to_base.matrix().allFinite() ||
+      !robot_in_map.matrix().allFinite())
+  {
+    RCLCPP_WARN_THROTTLE(
+        get_logger(), *get_clock(), 5000,
+        "TF SE3 contains non-finite entries (lidar_to_base ok=%d, "
+        "robot_in_map ok=%d); publishing not_trusted",
+        static_cast<int>(lidar_to_base.matrix().allFinite()),
+        static_cast<int>(robot_in_map.matrix().allFinite()));
+    publish_not_trusted();
+    return;
+  }
+
   crop_around_dock_in_lidar_frame(frame, lidar_to_base, robot_in_map);
+
+  // The cropper may have removed all points if the dock is far from
+  // the live scan window. Re-check.
+  if (frame.empty())
+  {
+    publish_not_trusted();
+    return;
+  }
 
   // GH #78: kinematic_icp's RegisterFrame can throw on degenerate input
   // (empty voxel map after a Reload race, or a malformed frame slipping

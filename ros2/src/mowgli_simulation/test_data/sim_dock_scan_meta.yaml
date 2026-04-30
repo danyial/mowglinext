@@ -1,0 +1,10 @@
+dock_scan_pcd_path: /ros2_ws/maps/dock_scan.pcd
+dock_pose_x: 0.000000
+dock_pose_y: 0.000000
+dock_pose_yaw_rad: 0.000000
+sensor_extrinsic_x: 0.000000
+sensor_extrinsic_y: 0.000000
+sensor_extrinsic_yaw_rad: 0.000000
+point_count: 44
+captured_at: 2026-04-30T00:00:00Z
+fix_type: SIMULATION

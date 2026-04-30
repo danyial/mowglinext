@@ -81,6 +81,18 @@ install(TARGETS
 )
 
 # ---------------------------------------------------------------------------
+# Plan 02-08 — synthetic /scan_kicp publisher (D-14, sim-only).
+# Installed as a regular Python script so the launch file can `executable=
+# synthetic_scan_kicp_publisher.py` it directly. Mirrors the install pattern
+# used in mowgli_localization (8 sibling rclpy scripts).
+# ---------------------------------------------------------------------------
+install(
+  PROGRAMS
+    scripts/synthetic_scan_kicp_publisher.py
+  DESTINATION lib/${PROJECT_NAME}
+)
+
+# ---------------------------------------------------------------------------
 # Install data directories
 # ---------------------------------------------------------------------------
 install(
@@ -90,6 +102,7 @@ install(
     launch
     config
     rviz
+    test_data
   DESTINATION share/${PROJECT_NAME}
 )
 
@@ -101,6 +114,16 @@ if(BUILD_TESTING)
   # Exclude uncrustify — we use clang-format (see .clang-format)
   set(ament_cmake_uncrustify_FOUND TRUE)
   ament_lint_auto_find_test_dependencies()
+
+  # Plan 02-08 — synthetic publisher smoke pytest.
+  # Pure-Python contract test: imports the publisher module via sys.path
+  # extension, exercises ray-cast + scan-synth helpers without needing
+  # rclpy / Gazebo. Pinned by Plan 02-08 acceptance criterion.
+  find_package(ament_cmake_pytest REQUIRED)
+  ament_add_pytest_test(test_synthetic_scan_publisher
+    test/test_synthetic_scan_publisher.py
+    TIMEOUT 60
+  )
 endif()
 
 ament_package()

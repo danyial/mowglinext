@@ -38,6 +38,15 @@
 
   <!-- Mowgli packages -->
   <exec_depend>mowgli_bringup</exec_depend>
+  <exec_depend>mowgli_lidar_docking</exec_depend>  <!-- Plan 02-08 sim_lidar_docking.launch.py -->
+
+  <!-- Plan 02-08 synthetic_scan_kicp_publisher runtime deps (rclpy + tf2_ros) -->
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>tf2_ros</exec_depend>
+
+  <!-- Plan 02-08 smoke pytest (test_synthetic_scan_publisher.py) -->
+  <test_depend>ament_cmake_pytest</test_depend>
+  <test_depend>ament_lint_auto</test_depend>
 
   <export>
     <build_type>ament_cmake</build_type>

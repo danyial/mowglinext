@@ -24,7 +24,31 @@
 int main(int argc, char** argv)
 {
   rclcpp::init(argc, argv);
-  rclcpp::spin(std::make_shared<mowgli_lidar_docking::DockScanMatchNode>());
+  // GH #78: surface construction / runtime exceptions before libc's
+  // abort handler eats them — without this catch the only signal we
+  // get is SIGABRT with no message, which is essentially undebuggable
+  // from `docker logs` output. The DockScanMatchNode constructor
+  // already catches around try_load_matcher_files; this is the outer
+  // safety net for anything else (rclcpp internals, allocator, etc.).
+  try
+  {
+    rclcpp::spin(std::make_shared<mowgli_lidar_docking::DockScanMatchNode>());
+  }
+  catch (const std::exception& ex)
+  {
+    RCLCPP_FATAL(rclcpp::get_logger("dock_scan_match"),
+                 "dock_scan_match terminating on unhandled exception: %s",
+                 ex.what());
+    rclcpp::shutdown();
+    return 1;
+  }
+  catch (...)
+  {
+    RCLCPP_FATAL(rclcpp::get_logger("dock_scan_match"),
+                 "dock_scan_match terminating on non-std exception");
+    rclcpp::shutdown();
+    return 1;
+  }
   rclcpp::shutdown();
   return 0;
 }

@@ -68,11 +68,41 @@ Sophus::SE3d se3_from_xy_yaw(double x, double y, double yaw_rad)
 DockScanMatchNode::DockScanMatchNode(const rclcpp::NodeOptions& opts)
     : rclcpp::Node("dock_scan_match", opts)
 {
+  RCLCPP_INFO(get_logger(), "dock_scan_match ctor: declare_all_parameters");
   declare_all_parameters();
+  RCLCPP_INFO(get_logger(),
+              "dock_scan_match ctor: scan_topic=%s robot_frame=%s map_frame=%s",
+              scan_topic_.c_str(), robot_frame_.c_str(), map_frame_.c_str());
   init_publishers();
+  RCLCPP_INFO(get_logger(), "dock_scan_match ctor: init_tf");
   init_tf();
 
-  if (try_load_matcher_files())
+  // GH #78: load + matcher construction can throw (load_dock_scan_pcd
+  // PCL exception, KinematicICP ctor on degenerate cfg, AddPoints on a
+  // miscaptured PCD). Catch here so the node enters DEGRADED instead of
+  // SIGABRT'ing the whole container.
+  bool loaded = false;
+  try
+  {
+    loaded = try_load_matcher_files();
+  }
+  catch (const std::exception& ex)
+  {
+    RCLCPP_ERROR(get_logger(),
+                 "dock_scan_match ctor: try_load_matcher_files threw: %s; "
+                 "entering DEGRADED",
+                 ex.what());
+    loaded = false;
+  }
+  catch (...)
+  {
+    RCLCPP_ERROR(get_logger(),
+                 "dock_scan_match ctor: try_load_matcher_files threw a "
+                 "non-std exception; entering DEGRADED");
+    loaded = false;
+  }
+
+  if (loaded)
   {
     degraded_ = false;
     RCLCPP_INFO(get_logger(),
@@ -87,8 +117,8 @@ DockScanMatchNode::DockScanMatchNode(const rclcpp::NodeOptions& opts)
   {
     degraded_ = true;
     RCLCPP_WARN(get_logger(),
-                "dock_scan_match in DEGRADED mode (missing %s or %s); "
-                "polling for capture every 30 s",
+                "dock_scan_match in DEGRADED mode (missing or unloadable %s "
+                "or %s); polling for capture every 30 s",
                 dock_scan_path_.c_str(), dock_calibration_path_.c_str());
     warned_no_pcd_ = true;
     // 30-s polling timer for Open Q3 self-activation when files appear.
@@ -98,6 +128,9 @@ DockScanMatchNode::DockScanMatchNode(const rclcpp::NodeOptions& opts)
   }
 
   init_subscriber_and_timer();
+  RCLCPP_INFO(get_logger(),
+              "dock_scan_match ctor: init complete, degraded=%s",
+              degraded_ ? "true" : "false");
 }
 
 DockScanMatchNode::DockScanMatchNode(const rclcpp::NodeOptions& opts,

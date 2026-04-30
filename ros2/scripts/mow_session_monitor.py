@@ -58,6 +58,11 @@ from geometry_msgs.msg import PoseWithCovarianceStamped, TwistStamped
 from nav_msgs.msg import Odometry, Path
 from sensor_msgs.msg import BatteryState, Imu, LaserScan, NavSatFix
 
+# Plan 02-08 D-15 — DockMatchConfidence is published by Plan 02-04's
+# dock_scan_match node alongside /dock_match/pose. Lazy-imported below
+# so the monitor still runs against pre-Phase-2 builds (degrades to
+# null dock_match fields rather than crashing on import).
+
 
 # -----------------------------------------------------------------------------
 # Utility helpers
@@ -212,6 +217,20 @@ class LatestState:
     _last_gyro_time: Optional[float] = None
     _last_wheel_time: Optional[float] = None
 
+    # --- Plan 02-08 D-15: dock_scan_match observability ---
+    # Populated from /dock_match/pose (PoseWithCovarianceStamped, reliable
+    # depth=1) + /dock_match/confidence (DockMatchConfidence, sensor QoS).
+    # See ros2/src/mowgli_interfaces/msg/DockMatchConfidence.msg for the
+    # field contract. All None until the matcher publishes; the per-sample
+    # writer emits null in that case so jq queries don't crash.
+    dock_match_pose_x: Optional[float] = None
+    dock_match_pose_y: Optional[float] = None
+    dock_match_pose_yaw_rad: Optional[float] = None
+    dock_match_pose_received_at: Optional[float] = None  # wallclock seconds
+    dock_match_confidence_inlier_ratio: Optional[float] = None
+    dock_match_confidence_rmse_m: Optional[float] = None
+    dock_match_confidence_trusted: Optional[bool] = None
+
 
 # -----------------------------------------------------------------------------
 # The node
@@ -251,6 +270,23 @@ class MowSessionMonitor(Node):
         self.rtk_cov_checks_violations = 0
         self.rtk_cov_check_pending = False       # true between arrival and first fusion tick
         self.peak_fusion_cov_post_rtk = 0.0      # worst cov seen during a pending check
+
+        # --- Plan 02-08 D-15: lateral-error-at-contact tracking ---
+        # On the rising edge of is_charging (false -> true) we project
+        # (robot_pose - dock_anchor) onto the dock-frame y-axis to get
+        # the SPEC R-7 lateral error at first dock contact. The dock
+        # anchor is loaded from /ros2_ws/maps/dock_calibration.yaml on
+        # first need (lazy: the file is written by dock_yaw_to_set_pose
+        # at first charge; absent in fresh installs). Without it we
+        # still log the rising-edge timestamp but lateral_error stays
+        # null. Hardware bench then has the dock_calibration on disk
+        # and produces real numbers.
+        self._prev_is_charging: Optional[bool] = None
+        self._dock_anchor: Optional[tuple[float, float, float]] = None  # (x, y, yaw_rad)
+        self._dock_anchor_load_attempted: bool = False
+        self.lateral_errors_at_contact_m: list[float] = []
+        self.dock_match_trusted_samples: int = 0
+        self.dock_match_total_samples: int = 0
 
         # --- write metadata header ---
         self._write_metadata()
@@ -294,6 +330,27 @@ class MowSessionMonitor(Node):
             self.get_logger().warn(f"mowgli_interfaces not available: {exc} — BT/status fields will be missing.")
 
         sub("/battery_state", BatteryState, self._battery_cb, QOS_RELIABLE)
+
+        # Plan 02-08 D-15 — dock_match topics (lazy import: pre-Phase-2
+        # builds don't ship DockMatchConfidence; degrade gracefully).
+        try:
+            from mowgli_interfaces.msg import DockMatchConfidence  # type: ignore
+            sub(
+                "/dock_match/pose",
+                PoseWithCovarianceStamped,
+                self._dock_match_pose_cb,
+                QOS_RELIABLE,
+            )
+            sub(
+                "/dock_match/confidence",
+                DockMatchConfidence,
+                self._dock_match_confidence_cb,
+                QOS_SENSOR,
+            )
+        except ImportError as exc:
+            self.get_logger().warn(
+                f"DockMatchConfidence not importable: {exc} — dock_match.* fields stay null."
+            )
 
         # Commands — both what Nav2 emits AND what reaches the motors, so we
         # can see the effect of collision_monitor / velocity_smoother.
@@ -493,6 +550,66 @@ class MowSessionMonitor(Node):
             s.scan_min_range = min(valid) if valid else None
 
     # ------------------------------------------------------------------
+    # Plan 02-08 D-15 — dock_match callbacks
+    # ------------------------------------------------------------------
+
+    def _dock_match_pose_cb(self, msg: PoseWithCovarianceStamped) -> None:
+        with self.state_lock:
+            s = self.state
+            s.dock_match_pose_x = msg.pose.pose.position.x
+            s.dock_match_pose_y = msg.pose.pose.position.y
+            qz = msg.pose.pose.orientation.z
+            qw = msg.pose.pose.orientation.w
+            s.dock_match_pose_yaw_rad = _quat_to_yaw(qz, qw)
+            s.dock_match_pose_received_at = time.time()
+
+    def _dock_match_confidence_cb(self, msg) -> None:
+        # Lazy-typed: msg is mowgli_interfaces.DockMatchConfidence.
+        with self.state_lock:
+            s = self.state
+            s.dock_match_confidence_inlier_ratio = float(msg.inlier_ratio)
+            s.dock_match_confidence_rmse_m = float(msg.rmse_m)
+            s.dock_match_confidence_trusted = bool(msg.trusted)
+
+    def _maybe_load_dock_anchor(self) -> None:
+        """One-shot lazy load of dock_calibration.yaml. Called from _tick
+        the first time we need the dock anchor (i.e. when is_charging
+        rising-edge fires and we want to compute lateral_error)."""
+        if self._dock_anchor_load_attempted:
+            return
+        self._dock_anchor_load_attempted = True
+        for path in (
+            "/ros2_ws/maps/dock_calibration.yaml",
+            "/home/ubuntu/mowglinext/install/maps/dock_calibration.yaml",
+        ):
+            try:
+                with open(path) as f:
+                    kv: dict[str, str] = {}
+                    for line in f:
+                        line = line.strip()
+                        if not line or line.startswith("#") or ":" not in line:
+                            continue
+                        k, v = line.split(":", 1)
+                        kv[k.strip()] = v.strip()
+                # Keys come from dock_yaw_to_set_pose / hardware_bridge — see
+                # CLAUDE.md "dock_pose_yaw auto-captured" note.
+                x = float(kv.get("dock_pose_x", "nan"))
+                y = float(kv.get("dock_pose_y", "nan"))
+                yaw = float(kv.get("dock_pose_yaw_rad", "nan"))
+                if math.isfinite(x) and math.isfinite(y) and math.isfinite(yaw):
+                    self._dock_anchor = (x, y, yaw)
+                    self.get_logger().info(
+                        f"Loaded dock anchor from {path}: "
+                        f"x={x:.3f} y={y:.3f} yaw={math.degrees(yaw):.1f}°"
+                    )
+                    return
+            except (OSError, ValueError):
+                continue
+        self.get_logger().warn(
+            "dock_calibration.yaml not found — lateral_error_at_contact will stay null."
+        )
+
+    # ------------------------------------------------------------------
     # Periodic snapshot
     # ------------------------------------------------------------------
 
@@ -564,6 +681,50 @@ class MowSessionMonitor(Node):
                 dist_to_goal = math.hypot(
                     s.fusion_x - s.plan_goal_x, s.fusion_y - s.plan_goal_y
                 )
+
+            # --- Plan 02-08 D-15: dock_match staleness + lateral-error-at-contact ---
+            dock_match_staleness_ms: Optional[float] = None
+            if s.dock_match_pose_received_at is not None:
+                dock_match_staleness_ms = max(
+                    0.0, (now_unix - s.dock_match_pose_received_at) * 1000.0
+                )
+
+            # Sample-counting for the dock_match_trusted_pct summary stat.
+            if s.dock_match_confidence_trusted is not None:
+                self.dock_match_total_samples += 1
+                if s.dock_match_confidence_trusted:
+                    self.dock_match_trusted_samples += 1
+
+            # Rising-edge detection: log the lateral error at the moment
+            # is_charging flips false -> true. SPEC R-7 hardware gate is
+            # ≤ 2 cm; the JSONL row carries the raw value so the operator's
+            # 5-of-5 acceptance can grep `lateral_error_at_contact_m`.
+            lateral_error_at_contact_m: Optional[float] = None
+            if (
+                s.is_charging is True
+                and self._prev_is_charging is False
+            ):
+                # Lazy-load the dock anchor on first need.
+                self._maybe_load_dock_anchor()
+                if (
+                    self._dock_anchor is not None
+                    and s.fusion_x is not None
+                    and s.fusion_y is not None
+                ):
+                    dx = s.fusion_x - self._dock_anchor[0]
+                    dy = s.fusion_y - self._dock_anchor[1]
+                    yaw_d = self._dock_anchor[2]
+                    # Project onto dock-frame y-axis (the lateral direction).
+                    lateral_error_at_contact_m = abs(
+                        -dx * math.sin(yaw_d) + dy * math.cos(yaw_d)
+                    )
+                    self.lateral_errors_at_contact_m.append(lateral_error_at_contact_m)
+                    self.get_logger().info(
+                        f"is_charging rising edge: lateral_error="
+                        f"{lateral_error_at_contact_m * 100.0:.1f}cm"
+                    )
+            # Always update prev for next tick.
+            self._prev_is_charging = s.is_charging
 
             record: dict[str, Any] = {
                 "type": "sample",
@@ -644,6 +805,29 @@ class MowSessionMonitor(Node):
                     "n_points": s.scan_n_points,
                     "min_range_m": s.scan_min_range,
                 },
+                # Plan 02-08 D-15: dock_match observability per sample.
+                # All fields null until /dock_match/{pose,confidence}
+                # arrives. lateral_error_at_contact_m fires on the
+                # rising edge of is_charging (false -> true) and is
+                # null on every other sample.
+                "dock_match": {
+                    "pose": {
+                        "x": s.dock_match_pose_x,
+                        "y": s.dock_match_pose_y,
+                        "yaw_deg": (
+                            math.degrees(s.dock_match_pose_yaw_rad)
+                            if s.dock_match_pose_yaw_rad is not None
+                            else None
+                        ),
+                    },
+                    "confidence": {
+                        "inlier_ratio": s.dock_match_confidence_inlier_ratio,
+                        "rmse_m": s.dock_match_confidence_rmse_m,
+                        "trusted": s.dock_match_confidence_trusted,
+                    },
+                    "staleness_ms": dock_match_staleness_ms,
+                },
+                "lateral_error_at_contact_m": lateral_error_at_contact_m,
                 "cross_checks": {
                     "fusion_gps_dist_m": fusion_gps_dist,
                     "fusion_carto_dist_m": (
@@ -740,6 +924,33 @@ class MowSessionMonitor(Node):
                 },
                 "final_battery_voltage": s.battery_voltage,
                 "final_bt_state_name": s.bt_state_name,
+                # Plan 02-08 D-15 — session-wide dock_match aggregates.
+                # See SPEC R-7 (≤ 2 cm at contact) and R-3 (trust threshold).
+                # The hardware bench's 5-of-5 acceptance grep these fields
+                # via `jq '.lateral_errors_at_contact_m'` etc.
+                "dock_match_summary": {
+                    "lateral_errors_at_contact_m": list(self.lateral_errors_at_contact_m),
+                    "mean_lateral_error_at_contact_m": (
+                        sum(self.lateral_errors_at_contact_m)
+                        / len(self.lateral_errors_at_contact_m)
+                        if self.lateral_errors_at_contact_m
+                        else None
+                    ),
+                    "max_lateral_error_at_contact_m": (
+                        max(self.lateral_errors_at_contact_m)
+                        if self.lateral_errors_at_contact_m
+                        else None
+                    ),
+                    "contacts_observed": len(self.lateral_errors_at_contact_m),
+                    "dock_match_trusted_pct": (
+                        100.0
+                        * self.dock_match_trusted_samples
+                        / self.dock_match_total_samples
+                        if self.dock_match_total_samples > 0
+                        else None
+                    ),
+                    "dock_match_total_samples": self.dock_match_total_samples,
+                },
             }
         try:
             self.file.write(json.dumps(summary, default=_json_default) + "\n")

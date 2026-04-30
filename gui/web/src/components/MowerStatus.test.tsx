@@ -7,6 +7,13 @@ vi.mock('../hooks/useHighLevelStatus.ts', () => ({
     useHighLevelStatus: () => mockHighLevelStatus(),
 }));
 
+// Plan 02-07: useDockMatch subscribes to /dock_match/* via the Go relay
+// (useWS WebSocket). Stub it out in unit tests so render doesn't try to
+// open a real WebSocket connection.
+vi.mock('../hooks/useDockMatch.ts', () => ({
+    useDockMatch: () => ({pose: null, confidence: null, lastMessageAt: null}),
+}));
+
 describe('MowerStatus', () => {
     it('displays idle state', () => {
         mockHighLevelStatus.mockReturnValue({

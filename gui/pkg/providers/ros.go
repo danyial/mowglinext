@@ -57,6 +57,12 @@ var topicMap = map[string]topicDef{
 	// mag_yaw_publisher.py in mowgli_localization.
 	"cogHeading":          {"/imu/cog_heading", "sensor_msgs/msg/Imu"},
 	"magYaw":              {"/imu/mag_yaw", "sensor_msgs/msg/Imu"},
+	// LiDAR dock-match telemetry (Plan 02-04 publisher contract). The pose
+	// topic uses reliable depth=1 on the publisher side; the conf topic is
+	// SensorDataQoS at 10 Hz. foxglove_bridge negotiates the QoS per
+	// subscription, so the GUI relay receives both reliably.
+	"dockMatchPose":       {"/dock_match/pose", "geometry_msgs/msg/PoseWithCovarianceStamped"},
+	"dockMatchConfidence": {"/dock_match/confidence", "mowgli_interfaces/msg/DockMatchConfidence"},
 }
 
 // ---------------------------------------------------------------------------

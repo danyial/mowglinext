@@ -21,3 +21,31 @@ this phase.
     drift so Plan 02-01's scope remains DockMatchConfidence-only.
   - Suggested fix: re-run `sync_ros_lib.py` and commit the MapArea.h MD5 fix
     as a separate `chore: re-sync firmware MapArea.h` PR outside Phase 2.
+
+## From Plan 02-07
+
+- **`ros.generated.ts` MapAreaConstants enum init expressions are invalid TS**
+  - File: `gui/web/src/types/ros.generated.ts` lines 281-283
+  - Symptom: `cd gui/web && yarn build` fails with
+    ```
+    src/types/ros.generated.ts(281,22): error TS2474: const enum member initializers must be constant expressions.
+    src/types/ros.generated.ts(281,22): error TS2565: Property 'NARROW_AREA_SKIP' is used before being assigned.
+    ```
+    The generator emits `NARROW_AREA_SKIP = NARROW_AREA_SKIP` (self-
+    referential), which TypeScript correctly rejects — the constants need
+    numeric values or a different generator output shape.
+  - Cause: pre-existing — bug in `gui/generate_ts_types.sh` introduced before
+    Plan 02-07. The file is NOT imported anywhere (the canonical types live
+    in `ros.ts`), but `tsconfig.json:include = ["src"]` makes `tsc` compile
+    it anyway.
+  - Risk: `yarn build` exits 2 on host / CI. Plan 02-07's GUI changes
+    (`useDockMatch.ts`, `DockMatchCard.tsx`, `MowerStatus.tsx`) compile
+    cleanly in isolation; the failure is entirely in `ros.generated.ts`.
+  - Action: NOT fixed in Plan 02-07 (deviation rule SCOPE BOUNDARY:
+    out-of-scope, pre-existing). `cd gui && go build ./...` exits 0 — the
+    Go side of Plan 02-07's GUI extension is verified.
+  - Suggested fix: either (a) regenerate `ros.generated.ts` after fixing
+    the `MapAreaConstants` enum emission in `gui/generate_ts_types.sh`,
+    OR (b) add `ros.generated.ts` to `tsconfig.json:exclude` until the
+    canonical `ros.ts` is regenerated from the same source. Out-of-scope
+    for Phase 2.

@@ -252,6 +252,10 @@ func SubscriberRoute(group *gin.RouterGroup, provider types.IRosProvider) {
 			def, err = subscribe(provider, c, conn, "cogHeading", 200)
 		case "magYaw":
 			def, err = subscribe(provider, c, conn, "magYaw", 200)
+		case "dockMatchPose":
+			def, err = subscribe(provider, c, conn, "dockMatchPose", 200)
+		case "dockMatchConfidence":
+			def, err = subscribe(provider, c, conn, "dockMatchConfidence", 200)
 		default:
 			log.Printf("SubscriberRoute: unknown topic %q", topic)
 			return

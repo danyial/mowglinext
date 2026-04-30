@@ -7,12 +7,14 @@ import {useSettings} from "../hooks/useSettings.ts";
 import {AbsolutePoseConstants} from "../types/ros.ts";
 import {computeBatteryPercent} from "../utils/battery.ts";
 import {restartMowgliNext} from "../utils/containers.ts";
-import {App, Badge, Dropdown, Modal, Space, Typography} from "antd";
-import {PoweroffOutlined, ReloadOutlined, DesktopOutlined, WifiOutlined} from "@ant-design/icons"
+import {App, Badge, Dropdown, Modal, Popover, Space, Typography} from "antd";
+import {PoweroffOutlined, ReloadOutlined, DesktopOutlined, WifiOutlined, AimOutlined} from "@ant-design/icons"
 import {stateRenderer} from "./utils.tsx";
 import {useThemeMode} from "../theme/ThemeContext.tsx";
 import {useApi} from "../hooks/useApi.ts";
 import type {MenuProps} from "antd";
+import {DockMatchCard} from "./DockMatchCard.tsx";
+import {useDockMatch} from "../hooks/useDockMatch.ts";
 
 const pulseKeyframes = `
 @keyframes mowerPulseGreen {
@@ -56,6 +58,10 @@ export const MowerStatus = () => {
     const {settings} = useSettings();
     const guiApi = useApi();
     const {notification} = App.useApp();
+
+    // LiDAR dock-match telemetry — feeds the Popover-triggered DockMatchCard
+    // next to the Charging indicator (D-09: extend the existing dock area).
+    const {confidence: dockMatchConf, lastMessageAt: dockMatchLastAt} = useDockMatch();
 
     // Derive state with fallbacks
     const isEmergency = highLevelStatus.emergency ?? emergencyData.active_emergency ?? false;
@@ -187,6 +193,31 @@ export const MowerStatus = () => {
                         {gpsPercent}%
                     </Typography.Text>
                 </Space>
+                {/* LiDAR dock-match Popover trigger (D-09: lives in the dock-related
+                    area next to the Charging indicator). Click opens DockMatchCard
+                    with the live confidence + Recapture button. The pill colour
+                    mirrors DockMatchCard's badge thresholds:
+                      green=trusted, yellow=borderline, red=degraded, grey=stale/no-data. */}
+                <Popover
+                    content={<DockMatchCard/>}
+                    trigger="click"
+                    placement="bottomRight"
+                    overlayStyle={{maxWidth: 320}}
+                >
+                    <Space size={4} style={{cursor: "pointer"}}>
+                        <AimOutlined
+                            style={{
+                                color: (() => {
+                                    if (dockMatchLastAt == null) return colors.muted;
+                                    if (Date.now() - dockMatchLastAt > 5_000) return colors.muted;
+                                    if (dockMatchConf?.trusted) return colors.primary;
+                                    return colors.danger;
+                                })(),
+                                fontSize: 13,
+                            }}
+                        />
+                    </Space>
+                </Popover>
                 <Dropdown menu={{items: powerMenuItems}} trigger={["click"]} placement="bottomRight">
                     <Space size={4} style={{cursor: "pointer"}}>
                         <PoweroffOutlined style={{

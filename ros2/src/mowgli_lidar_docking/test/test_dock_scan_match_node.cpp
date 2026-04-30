@@ -44,6 +44,7 @@
 //      publish confidence{trusted=false} so consumers see a defined
 //      baseline.
 
+#include "mowgli_lidar_docking/confidence_metrics.hpp"
 #include "mowgli_lidar_docking/dock_scan_match_node.hpp"
 #include "mowgli_lidar_docking/idock_matcher.hpp"
 

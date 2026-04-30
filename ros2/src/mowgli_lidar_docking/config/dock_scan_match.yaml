@@ -36,10 +36,17 @@ dock_scan_match:
     dock_scan_meta_path: "/ros2_ws/maps/dock_scan_meta.yaml"
 
     # ---- Topics ----
-    scan_topic: "/scan_kicp"
+    # GH #77: dock_scan_match consumes the MAIN-tree scan (/scan in
+    # lidar_link), NOT the parallel-tree scan (/scan_kicp in
+    # lidar_link_wheels). Architecture Invariant #1 deliberately
+    # decouples the parallel tree from `map`, so any frame in that tree
+    # is unreachable here. Plan 02-04 mistakenly aliased the two. The
+    # matcher's job (absolute-pose lookup against the dock anchor) only
+    # makes sense in the main tree.
+    scan_topic: "/scan"
     pose_topic: "/dock_match/pose"
     confidence_topic: "/dock_match/confidence"
 
-    # ---- Frames (parallel TF tree per Architecture Invariant #1) ----
-    robot_frame: "base_footprint_wheels"
+    # ---- Frames (main TF tree — see GH #77) ----
+    robot_frame: "base_footprint"
     map_frame: "map"

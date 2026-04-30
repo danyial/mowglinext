@@ -140,12 +140,17 @@ void DockScanMatchNode::declare_all_parameters()
       "dock_scan_path", "/ros2_ws/maps/dock_scan.pcd");
   dock_scan_meta_path_   = declare_parameter<std::string>(
       "dock_scan_meta_path", "/ros2_ws/maps/dock_scan_meta.yaml");
-  scan_topic_            = declare_parameter<std::string>("scan_topic", "/scan_kicp");
+  // GH #77: defaults are now MAIN tree (/scan in lidar_link,
+  // base_footprint), NOT the parallel tree. The parallel tree is
+  // intentionally decoupled from `map` per Architecture Invariant #1,
+  // so any frame in it cannot resolve to map and the matcher cannot
+  // place its scans in the dock anchor frame.
+  scan_topic_            = declare_parameter<std::string>("scan_topic", "/scan");
   pose_topic_            = declare_parameter<std::string>("pose_topic", "/dock_match/pose");
   confidence_topic_      = declare_parameter<std::string>(
       "confidence_topic", "/dock_match/confidence");
   robot_frame_           = declare_parameter<std::string>(
-      "robot_frame", "base_footprint_wheels");
+      "robot_frame", "base_footprint");
   map_frame_             = declare_parameter<std::string>("map_frame", "map");
 }
 
@@ -498,8 +503,35 @@ void DockScanMatchNode::tick()
 
   crop_around_dock_in_lidar_frame(frame, lidar_to_base, robot_in_map);
 
+  // GH #78: kinematic_icp's RegisterFrame can throw on degenerate input
+  // (empty voxel map after a Reload race, or a malformed frame slipping
+  // through the cropper). Previously an unhandled throw escaped the
+  // tick callback and was caught by rclcpp's executor as SIGABRT,
+  // killing the node with no respawn. Catch here and emit
+  // not_trusted instead so the matcher stays alive and self-recovers
+  // on the next scan.
   ++register_frame_calls_;
-  const auto result = matcher_->Match(frame, lidar_to_base);
+  MatchResult result;
+  try
+  {
+    result = matcher_->Match(frame, lidar_to_base);
+  }
+  catch (const std::exception& ex)
+  {
+    RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 5000,
+                         "matcher Match() threw: %s; emitting not_trusted",
+                         ex.what());
+    publish_not_trusted();
+    return;
+  }
+  catch (...)
+  {
+    RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 5000,
+                         "matcher Match() threw a non-std exception; "
+                         "emitting not_trusted");
+    publish_not_trusted();
+    return;
+  }
   publish_match(result);
 }
 

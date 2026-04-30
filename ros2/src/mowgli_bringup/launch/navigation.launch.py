@@ -163,19 +163,29 @@ def generate_launch_description() -> LaunchDescription:
     # value (issue #74) — operators were having to live-set it via
     # `ros2 param set` after every redeploy.
     #
-    # Same key-set as parse in hardware_bridge_node.cpp / BehaviorTreeNode
-    # / dock_yaw_to_set_pose.py, so all four agree on the dock pose at
-    # boot:
-    #   dock_calibration:
-    #     dock_pose_x: <metres>
-    #     dock_pose_y: <metres>
-    #     dock_pose_yaw_rad: <radians>
+    # Same key-set parsed by hardware_bridge_node.cpp / BehaviorTreeNode
+    # / dock_yaw_to_set_pose.py / mowgli_geometry::load_dock_calibration_file
+    # so all callers agree on the dock pose at boot. GH #76 migrated the
+    # writer (calibrate_imu_yaw_node.py) to the flat key=value form
+    # required by the C++ parser:
+    #   dock_pose_x: <metres>
+    #   dock_pose_y: <metres>
+    #   dock_pose_yaw_rad: <radians>
+    # This reader accepts EITHER the flat form OR the legacy wrapped form
+    # (`dock_calibration:\n  dock_pose_x: ...`) so existing on-disk files
+    # from pre-#76 deployments continue to work — and the next dock-yaw
+    # calibration drive will rewrite the file in flat form.
     dock_calibration_path = "/ros2_ws/maps/dock_calibration.yaml"
     if os.path.isfile(dock_calibration_path):
         try:
             with open(dock_calibration_path, "r") as f:
                 cal_doc = yaml.safe_load(f) or {}
-            cal = cal_doc.get("dock_calibration") or {}
+            # Wrapped form: pull from the inner mapping. Flat form: pull
+            # from the top-level mapping directly.
+            if isinstance(cal_doc, dict) and "dock_calibration" in cal_doc:
+                cal = cal_doc.get("dock_calibration") or {}
+            else:
+                cal = cal_doc if isinstance(cal_doc, dict) else {}
             cal_x = cal.get("dock_pose_x")
             cal_y = cal.get("dock_pose_y")
             cal_yaw = cal.get("dock_pose_yaw_rad")

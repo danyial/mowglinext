@@ -210,6 +210,18 @@ class ImuYawCalibrator(Node):
 
         self._cb_group = ReentrantCallbackGroup()
 
+        # GH #76 self-healing migration: rewrite legacy yaml-cpp-style
+        # `dock_calibration:\n  dock_pose_x: ...` files as flat key=value
+        # so the C++ readers (mowgli_geometry::load_dock_calibration_file
+        # used by hardware_bridge_node + dock_scan_match) can parse them
+        # without re-running a full calibration drive.
+        try:
+            self._migrate_dock_calibration_to_flat_if_needed()
+        except Exception as exc:  # noqa: BLE001 — non-fatal best-effort
+            self.get_logger().info(
+                f"dock_calibration.yaml migration check skipped: {exc}"
+            )
+
         imu_qos = QoSProfile(
             reliability=ReliabilityPolicy.BEST_EFFORT,
             durability=DurabilityPolicy.VOLATILE,
@@ -549,11 +561,23 @@ class ImuYawCalibrator(Node):
             )
             return None
 
+        # GH #79: capture dock_scan BEFORE the reverse drive while the
+        # robot is still on the dock (is_charging=True, vx≈0). The prior
+        # arrangement put the capture-call AFTER the drive, by which point
+        # the robot has retreated ~2 m and disengaged the charging
+        # contacts; the gate inside dock_scan_capture then refused 100% of
+        # the time, so the canonical operator flow never produced a usable
+        # dock_scan.pcd. Putting it here means the GUI Recapture button
+        # finally does what its name implies. Capture failures stay
+        # non-fatal so a missing scan does not block the dock-yaw write.
+        dock_scan_captured = self._capture_dock_scan_pre_drive()
+
         self.get_logger().info(
             f"RTK-Fixed acquired. Reversing at {self.DOCK_UNDOCK_SPEED:+.2f} m/s "
             f"target {self.DOCK_UNDOCK_DISTANCE_M:.1f} m "
             f"(timeout {self.DOCK_UNDOCK_TIMEOUT_SEC:.0f} s) — "
-            f"start pos=({x0:+.3f}, {y0:+.3f})."
+            f"start pos=({x0:+.3f}, {y0:+.3f}). "
+            f"dock_scan_captured={dock_scan_captured}."
         )
 
         period = 1.0 / self.CMD_RATE_HZ
@@ -615,10 +639,22 @@ class ImuYawCalibrator(Node):
             "speed_ms": self.DOCK_UNDOCK_SPEED,
         }
 
+        # GH #76: write flat key=value (D-17), NOT yaml-cpp-style nested.
+        # `mowgli_geometry::load_dock_calibration_file` (the C++ reader used
+        # by mowgli_map and mowgli_lidar_docking::dock_scan_match) anchors
+        # parser keys at column 0 and rejects indented `dock_calibration:\n
+        # dock_pose_x:` files outright. Plan 02-01 promoted the flat parser
+        # but missed migrating this writer, so the matcher booted in
+        # DEGRADED on every install. Mirrors the dock_scan_capture meta
+        # writer.
         try:
             os.makedirs(os.path.dirname(self.DOCK_CALIBRATION_PATH), exist_ok=True)
             with open(self.DOCK_CALIBRATION_PATH, "w") as fh:
-                yaml.safe_dump({"dock_calibration": result}, fh, sort_keys=False)
+                for k, v in result.items():
+                    if isinstance(v, float):
+                        fh.write(f"{k}: {v:.6f}\n")
+                    else:
+                        fh.write(f"{k}: {v}\n")
         except Exception as exc:
             self.get_logger().error(
                 f"Failed to persist dock calibration to "
@@ -635,74 +671,142 @@ class ImuYawCalibrator(Node):
             )
         )
 
-        # Plan 02-03 SPEC R-1: capture /scan_kicp -> dock_scan.pcd +
-        # dock_scan_meta.yaml so the existing operator GUI button produces
-        # everything Plan 02-04's matcher needs at startup.
-        #
-        # IMPORTANT: at this point the robot has just driven backwards
-        # ~0.8 m off the dock and stopped (settle phase above). The
-        # is_charging gate inside dock_scan_capture WILL trip on most
-        # installs because the robot is no longer touching the charge
-        # contacts. That is intentional per the plan: capture failure is
-        # non-fatal and the operator falls back to the GUI Recapture
-        # button (Plan 02-07) once the robot is re-docked. We attempt
-        # capture here anyway because (a) some docks keep charging
-        # contact during the 0.8 m retreat, (b) the failure path is
-        # cheap (~0 cost), and (c) this guarantees the file appears as
-        # quickly as possible whenever the gate happens to allow it.
-        dock_scan_captured = False
-        if dock_scan_capture is None:
-            self.get_logger().info(
-                "dock_scan_capture module unavailable - skipping LiDAR snapshot"
-            )
-        else:
-            try:
-                dock_scan_captured = dock_scan_capture.capture_and_save(
-                    self,
-                    dock_pose_x=float(x0),
-                    dock_pose_y=float(y0),
-                    dock_pose_yaw_rad=float(dock_yaw),
-                    is_charging_gate=bool(self._is_charging),
-                    wheel_vx=float(self._latest_wheel_vx),
-                    fix_type=str(self._latest_fix_type),
-                    sensor_extrinsic_xyz_rad=self._lookup_sensor_extrinsic_for_dock_scan(),
-                )
-            except Exception as exc:
-                self.get_logger().error(
-                    f"dock_scan_capture raised: {exc}; calibration kept SUCCESS"
-                )
-                dock_scan_captured = False
-
-        # Surface to the caller (_calibrate_cb) so it can append a hint to
-        # the CalibrateImuYawStatus.message field. The dock-yaw write
-        # itself succeeded, so the bool .success bit is unaffected.
+        # GH #79: dock_scan capture happens BEFORE the reverse drive
+        # (see top of this method). The captured-bool is surfaced via
+        # the result dict so _calibrate_cb can append a status hint.
         result["dock_scan_captured"] = bool(dock_scan_captured)
-        if not dock_scan_captured:
-            self.get_logger().warn(
-                "dock_scan capture skipped or failed - operator can retry "
-                "via GUI Recapture button (Plan 02-07) once the robot is "
-                "back on the dock"
-            )
 
         return result
 
+    def _migrate_dock_calibration_to_flat_if_needed(self) -> None:
+        """If /ros2_ws/maps/dock_calibration.yaml exists in the legacy
+        wrapped form (`dock_calibration:\\n  dock_pose_x: ...`), rewrite
+        it in flat key=value form (GH #76).
+
+        The C++ reader (`mowgli_geometry::load_dock_calibration_file`)
+        anchors keys at column 0 and silently fails on indented keys,
+        which puts dock_scan_match in DEGRADED mode forever. This
+        migration is idempotent: a flat file is left untouched.
+        """
+        if not os.path.isfile(self.DOCK_CALIBRATION_PATH):
+            return
+        with open(self.DOCK_CALIBRATION_PATH, "r") as fh:
+            doc = yaml.safe_load(fh) or {}
+        if not isinstance(doc, dict):
+            return
+        # Flat form: top-level keys are dock_pose_*. Wrapped form: a
+        # single `dock_calibration` key whose value is the inner mapping.
+        if "dock_pose_x" in doc:
+            return  # already flat — nothing to do
+        if "dock_calibration" not in doc or not isinstance(
+            doc["dock_calibration"], dict
+        ):
+            return  # unrecognised — leave alone
+        inner = doc["dock_calibration"]
+        # Atomic-ish rewrite: write to a tmp path then rename.
+        tmp_path = self.DOCK_CALIBRATION_PATH + ".tmp"
+        with open(tmp_path, "w") as fh:
+            for k, v in inner.items():
+                if isinstance(v, float):
+                    fh.write(f"{k}: {v:.6f}\n")
+                else:
+                    fh.write(f"{k}: {v}\n")
+        os.replace(tmp_path, self.DOCK_CALIBRATION_PATH)
+        self.get_logger().info(
+            f"dock_calibration.yaml migrated wrapped -> flat (GH #76); "
+            f"keys: {sorted(inner.keys())}"
+        )
+
+    def _capture_dock_scan_pre_drive(self) -> bool:
+        """Run dock_scan_capture.capture_and_save while the robot is still
+        on the dock (charging, stationary). Called from _run_dock_yaw_drive
+        BEFORE the reverse drive begins. Failure is non-fatal — the
+        dock-yaw calibration always proceeds; only the LiDAR snapshot is
+        skipped.
+
+        For the anchor pose (dock_pose_x/y/yaw_rad in dock_scan_meta) we
+        prefer the live `map -> base_footprint` TF over the GPS x0/y0,
+        since TF includes the robot's heading whereas GPS only gives x/y.
+        Falls back to (gps_x, gps_y, 0) if TF is unavailable.
+        """
+        if dock_scan_capture is None:
+            self.get_logger().info(
+                "dock_scan_capture module unavailable — skipping LiDAR snapshot"
+            )
+            return False
+
+        # Live anchor from TF (preferred). Falls back to GPS-only on
+        # failure. Lookup uses the MAIN tree (map → base_footprint), not
+        # the parallel tree (per GH #77).
+        anchor_x, anchor_y, anchor_yaw = (
+            float(self._latest_gps_x or 0.0),
+            float(self._latest_gps_y or 0.0),
+            0.0,
+        )
+        if self._tf_buffer is not None:
+            try:
+                tf = self._tf_buffer.lookup_transform(
+                    "map",
+                    "base_footprint",
+                    rclpy.time.Time(),
+                    timeout=rclpy.duration.Duration(seconds=0.2),
+                )
+                q = tf.transform.rotation
+                # planar yaw extraction (no tf_transformations dep)
+                from math import atan2 as _atan2
+                yaw = _atan2(2.0 * (q.w * q.z + q.x * q.y),
+                             1.0 - 2.0 * (q.y * q.y + q.z * q.z))
+                anchor_x = float(tf.transform.translation.x)
+                anchor_y = float(tf.transform.translation.y)
+                anchor_yaw = float(yaw)
+            except Exception as exc:
+                self.get_logger().info(
+                    f"dock_scan capture: live TF map -> base_footprint "
+                    f"unavailable ({exc}); falling back to GPS x/y"
+                )
+
+        try:
+            return bool(dock_scan_capture.capture_and_save(
+                self,
+                dock_pose_x=anchor_x,
+                dock_pose_y=anchor_y,
+                dock_pose_yaw_rad=anchor_yaw,
+                is_charging_gate=bool(self._is_charging),
+                wheel_vx=float(self._latest_wheel_vx),
+                fix_type=str(self._latest_fix_type),
+                sensor_extrinsic_xyz_rad=self._lookup_sensor_extrinsic_for_dock_scan(),
+            ))
+        except Exception as exc:
+            self.get_logger().error(
+                f"dock_scan_capture raised: {exc}; continuing with dock-yaw "
+                "drive without a fresh LiDAR snapshot"
+            )
+            return False
+
     def _lookup_sensor_extrinsic_for_dock_scan(self):
-        """Lookup base_footprint_wheels -> lidar_link_wheels (parallel TF
-        tree per CLAUDE.md AI #1) so dock_scan_capture can record the
-        sensor pose in dock_scan_meta.yaml.
+        """Lookup base_footprint -> lidar_link (MAIN TF tree) so
+        dock_scan_capture can record the sensor pose in
+        dock_scan_meta.yaml.
+
+        GH #77: previously this looked up the parallel tree
+        (base_footprint_wheels -> lidar_link_wheels). The dock_scan_match
+        node lives in the main tree and re-resolves the extrinsic from
+        TF at runtime; persisting the parallel-tree value in the meta
+        was either ignored or wrong depending on whether the URDF
+        joint angles matched between the two trees. Both trees mirror
+        the URDF static joint, so swapping to the main-tree lookup is
+        a no-op semantically and removes the parallel-tree dependency.
 
         Returns (x, y, yaw_rad). Falls back to (0.0, 0.0, 0.0) on any
         failure: TF buffer not initialised, lookup timeout, or
-        tf_transformations module missing. Plan 02-04's matcher
-        re-resolves the extrinsic from the live TF at runtime, so a
-        zero-fallback in the persisted meta is non-fatal.
+        tf_transformations module missing.
         """
         if self._tf_buffer is None:
             return (0.0, 0.0, 0.0)
         try:
             tf = self._tf_buffer.lookup_transform(
-                "base_footprint_wheels",
-                "lidar_link_wheels",
+                "base_footprint",
+                "lidar_link",
                 rclpy.time.Time(),
                 timeout=rclpy.duration.Duration(seconds=0.2),
             )
@@ -732,8 +836,7 @@ class ImuYawCalibrator(Node):
         except Exception as exc:
             self.get_logger().info(
                 "dock_scan_capture: extrinsic TF lookup "
-                "(base_footprint_wheels -> lidar_link_wheels) failed "
-                f"({exc}); using zeros"
+                f"(base_footprint -> lidar_link) failed ({exc}); using zeros"
             )
             return (0.0, 0.0, 0.0)
 

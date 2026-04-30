@@ -189,10 +189,22 @@ parse_ts_fields() {
     done < "$file"
 }
 
-# Parse constants from a .msg file and emit TS const enum entries
+# Parse constants from a .msg file and emit TS const enum entries.
+#
+# ROS2 .msg syntax allows constants in either form:
+#   uint8 NARROW_AREA_SKIP=0          (no whitespace around `=`)
+#   uint8 NARROW_AREA_SKIP = 0        (whitespace around `=`)
+#
+# Older revisions of this script used `awk '{print $2}'` which collapses both
+# forms into the single token `NARROW_AREA_SKIP` for the second form, then
+# parameter-expanded `${name_val%%=*}` and `${name_val#*=}` against a string
+# that contained no `=` — both expansions returned the full token, emitting
+# `NARROW_AREA_SKIP = NARROW_AREA_SKIP,` (self-referential, invalid TS).
+#
+# Robust parse: strip the type prefix (first word + any whitespace), then
+# normalize whitespace around `=` before splitting.
 parse_ts_constants() {
     local file="$1"
-    local has_constants=false
     while IFS= read -r line; do
         line="${line%%#*}"
         line="$(echo "$line" | xargs)"
@@ -200,15 +212,14 @@ parse_ts_constants() {
         # Only constants (contain =)
         [[ "$line" != *"="* ]] && continue
 
-        local name_val
-        # Extract "NAME=value" from "type NAME=value"
-        name_val="$(echo "$line" | awk '{print $2}')"
-        local name="${name_val%%=*}"
-        local val="${name_val#*=}"
+        # Drop the leading type token (everything up to and including the
+        # first whitespace block) — leaves "NAME[ ]=[ ]value".
+        local rhs="${line#* }"
+        # Normalize: collapse whitespace around `=` so split is unambiguous.
+        rhs="$(echo "$rhs" | sed 's/[[:space:]]*=[[:space:]]*/=/')"
+        local name="${rhs%%=*}"
+        local val="${rhs#*=}"
 
-        if ! $has_constants; then
-            has_constants=true
-        fi
         echo "  ${name} = ${val},"
     done < "$file"
 }

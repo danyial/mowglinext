@@ -2,9 +2,9 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: unknown
-stopped_at: Plan 02-08 automatable scope complete; Pi5 hardware UAT pending
-last_updated: "2026-04-30T08:00:00.000Z"
+status: gap-closure-needed
+stopped_at: Phase-end podman build ran; mowgli_lidar_docking integration gap discovered (kinematic_icp/kiss_icp cpp headers not exported by ament)
+last_updated: "2026-04-30T09:30:00.000Z"
 progress:
   total_phases: 2
   completed_phases: 1
@@ -29,8 +29,8 @@ progress:
 
 ## Resume point
 
-- **Last completed step:** Plan 02-08 Tasks 1+2 — automatable scope. D-14 synthetic_scan_kicp_publisher + sim_lidar_docking.launch.py + pre-baked sim_dock_scan.pcd fixture + e2e_test `_run_fine_dock_phase` + D-15 mow_session_monitor `/dock_match/{pose,confidence}` subscribers + per-sample `dock_match.*` fields + rising-edge `lateral_error_at_contact_m` + summary `dock_match_summary` block + 02-VERIFICATION.md (29 acceptance rows) + 02-08-PI5-CHECKLIST.md (operator runbook).
-- **Next step:** Phase-end podman colcon build to clear DEFERRED-TO-PHASE-END-BUILD steps from Plans 02-01 through 02-08; THEN operator runs `02-08-PI5-CHECKLIST.md` on Pi5 for the 5-of-5 hardware UAT (R-7/R-9/R-11 hardware gates) + commits `02-08-PI5-RESULTS.md`; THEN `/gsd-verify-phase 2` flips hardware rows in 02-VERIFICATION.md. Phase 2 closes only after that sequence completes.
+- **Last completed step:** Phase-end podman build (`podman build --target build`) executed twice on `feat/mag-pipeline-resurrect`: first run failed with `libsophus-dev` not found; commit `0e8b2038` swapped to `ros-kilted-sophus`; second run got 9/13 packages green (mowgli_geometry, mowgli_interfaces, mowgli_nav2_plugins, mowgli_localization, mowgli_coverage_planner, mowgli_hardware, mowgli_monitoring, mowgli_map, kinematic_icp) but failed at mowgli_lidar_docking — Plan 02-02/02-04 CMakeLists assumed `ament_target_dependencies(... kinematic_icp)` propagates the cpp/ headers; it does not. Plan 02-02 PROBE.md (lines 47-52) had flagged this exact integration risk. Three packages not processed: mowgli_behavior, mowgli_simulation, mowgli_bringup.
+- **Next step:** GAP-CLOSURE PLAN required. Run `/gsd-plan-phase 2 --gaps` to author a fix plan that resolves the kinematic_icp ↔ mowgli_lidar_docking integration. Recommended approach (see `deferred-items.md` § "From phase-end podman build"): self-FetchContent kiss_icp + add_subdirectory the kinematic_icp cpp lib inside `mowgli_lidar_docking/CMakeLists.txt`, with target name conflicts resolved via EXCLUDE_FROM_ALL or scoped subdirectory naming. After the gap plan executes and `podman build --target build` reaches `Successfully tagged mowgli-phase2:test`, THEN operator runs `02-08-PI5-CHECKLIST.md` on Pi5 for the 5-of-5 hardware UAT.
 - **Auto-chain flag persisted:** yes (`workflow._auto_chain_active=true` in `.planning/config.json`)
 - **Wave 1 plans:** 01-01 ✅ COMPLETE, 01-03 ✅ COMPLETE
 - **Wave 2 plans:** 01-02 ✅ COMPLETE, 01-04 ✅ COMPLETE
@@ -41,13 +41,13 @@ progress:
 
 ## Last session
 
-- **Last session:** 2026-04-30T08:00:00.000Z
-- **Stopped at:** Plan 02-08 automatable scope complete; Pi5 hardware UAT pending
+- **Last session:** 2026-04-30T09:30:00.000Z
+- **Stopped at:** Phase-end build surfaced mowgli_lidar_docking integration gap (kinematic_icp/kiss_icp cpp headers not exported by ament). Gap-closure plan needed.
 - **Resume file:** None
 - **Blockers:**
+  - **NEW — Phase 2 gap:** mowgli_lidar_docking cannot compile against kinematic_icp + kiss_icp headers. Plans 02-02 + 02-04 left an integration gap; Plan 02-02 PROBE.md flagged it (lines 47-52) but executor ignored. Full diagnosis + fix paths in `.planning/phases/02-lidar-dock-pose-estimation/deferred-items.md` § "From phase-end podman build". Resolution path: `/gsd-plan-phase 2 --gaps` → executes gap-closure plan → re-run `podman build --target build`. 9/13 packages already green incl. all Phase-1 + Plan 02-01 (key_value_parser migration) + Plan 02-03 + Plan 02-05.
   - SPEC AC-13 (Phase 1) — operator must still execute the Pi5 Eichenau garden 5-of-5 smoke per 01-09-SUMMARY.md.
-  - Phase 2 — operator must execute the new Pi5 5-of-5 hardware UAT per `02-08-PI5-CHECKLIST.md` (R-7 ≤ 2 cm lateral / ≤ 1° yaw at contact, R-9 manual E-Stop test in cycle 3, R-11 ≥7-day auto-refresh in one cycle). Operator commits `02-08-PI5-RESULTS.md` afterwards; `/gsd-verify-phase 2` flips R-7/R-9/R-11 hardware rows in `02-VERIFICATION.md`.
-  - Phase 2 phase-end podman build (host = macOS, no colcon) — clears DEFERRED-TO-PHASE-END-BUILD steps from Plans 02-01 through 02-08 before the operator's 5-of-5 begins.
+  - Phase 2 5-of-5 hardware UAT per `02-08-PI5-CHECKLIST.md` (R-7 / R-9 / R-11 hardware gates) — gated on the build gap above being resolved.
 
 ## Performance Metrics
 

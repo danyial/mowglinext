@@ -183,6 +183,11 @@ if(BUILD_TESTING)
     test/test_calibrate_imu_yaw_capture.py
     TIMEOUT 60
   )
+  # Plan 02-05: cascade extension for dock_yaw_to_set_pose seeder.
+  ament_add_pytest_test(test_dock_yaw_seeder_cascade
+    test/test_dock_yaw_seeder_cascade.py
+    TIMEOUT 60
+  )
 endif()
 
 # ---------------------------------------------------------------------------

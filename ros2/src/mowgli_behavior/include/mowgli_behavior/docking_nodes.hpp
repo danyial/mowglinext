@@ -348,8 +348,12 @@ public:
   static BT::PortsList providedPorts()
   {
     return {
-        BT::InputPort<double>("warn_threshold_m", 0.5),
-        BT::InputPort<double>("fail_threshold_m", 1.5),
+        BT::InputPort<double>("warn_threshold_m", 0.5,
+                              "RTK error threshold (m) above which a WARN is logged + "
+                              "ctx->dock_pose_suspect is flagged"),
+        BT::InputPort<double>("fail_threshold_m", 1.5,
+                              "RTK error threshold (m) above which the UndockSequence "
+                              "aborts with FAILURE"),
     };
   }
 

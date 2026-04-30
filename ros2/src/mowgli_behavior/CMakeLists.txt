@@ -150,6 +150,33 @@ if(BUILD_TESTING)
     tf2
     tf2_ros
   )
+
+  # ---- test_docking_nodes (Plan 02-06 LiDAR-dock BT nodes) ----
+  ament_add_gtest(test_docking_nodes
+    test/test_docking_nodes.cpp
+    src/docking_nodes.cpp
+  )
+
+  target_include_directories(test_docking_nodes PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:include>
+  )
+
+  ament_target_dependencies(test_docking_nodes
+    rclcpp
+    rclcpp_action
+    behaviortree_cpp
+    mowgli_interfaces
+    mowgli_lidar_docking
+    nav2_msgs
+    nav_msgs
+    geometry_msgs
+    sensor_msgs
+    action_msgs
+    tf2
+    tf2_ros
+    tf2_geometry_msgs
+  )
 endif()
 
 ament_package()

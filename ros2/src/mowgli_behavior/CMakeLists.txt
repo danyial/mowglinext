@@ -32,7 +32,9 @@ find_package(action_msgs REQUIRED)
 find_package(std_msgs REQUIRED)
 find_package(std_srvs REQUIRED)
 find_package(mowgli_interfaces REQUIRED)
+find_package(mowgli_lidar_docking REQUIRED)
 find_package(rcl_interfaces REQUIRED)
+find_package(sensor_msgs REQUIRED)
 
 
 # ---------------------------------------------------------------------------
@@ -68,10 +70,12 @@ ament_target_dependencies(behavior_tree_node
   nav2_msgs
   nav_msgs
   geometry_msgs
+  sensor_msgs
   action_msgs
   std_msgs
   std_srvs
   mowgli_interfaces
+  mowgli_lidar_docking
   rcl_interfaces
 )
 

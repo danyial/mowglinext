@@ -68,6 +68,12 @@ void registerAllNodes(BT::BehaviorTreeFactory& factory)
   factory.registerNodeType<RecordResumeUndockFailure>("RecordResumeUndockFailure");
   factory.registerNodeType<ResetEmergency>("ResetEmergency");
 
+  // Phase 2 (Plan 02-06) — LiDAR-based dock pose estimation BT nodes.
+  // Registers: RecordDockApproachPose, ApproachDock, FineDock,
+  //            PreUndockClearanceCheck, PostUndockRtkValidation.
+  // main_tree.xml wiring + the 4 DockRobot site migrations land in Plan 02-07.
+  register_docking_nodes(factory);
+
   // Single-shot coverage nodes (Plan 01-08: replaces the legacy 5-class
   // pull-path scheme with PlanCoverageGoal + FollowCoveragePlan that consume
   // /coverage_planner_node/plan_coverage and dispatch per-segment Nav2 calls).

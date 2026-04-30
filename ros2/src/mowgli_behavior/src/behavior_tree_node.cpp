@@ -28,10 +28,12 @@
 #include "ament_index_cpp/get_package_share_directory.hpp"
 #include "behaviortree_cpp/behavior_tree.h"
 #include "behaviortree_cpp/loggers/bt_cout_logger.h"
+#include "geometry_msgs/msg/pose_with_covariance_stamped.hpp"
 #include "mowgli_behavior/action_nodes.hpp"
 #include "mowgli_behavior/bt_context.hpp"
 #include "mowgli_behavior/condition_nodes.hpp"
 #include "mowgli_interfaces/msg/absolute_pose.hpp"
+#include "mowgli_interfaces/msg/dock_match_confidence.hpp"
 #include "mowgli_interfaces/msg/emergency.hpp"
 #include "mowgli_interfaces/msg/power.hpp"
 #include "mowgli_interfaces/msg/status.hpp"
@@ -40,6 +42,7 @@
 #include "nav2_msgs/action/undock_robot.hpp"
 #include "rclcpp/rclcpp.hpp"
 #include "rclcpp_action/rclcpp_action.hpp"
+#include "sensor_msgs/msg/laser_scan.hpp"
 #include "std_msgs/msg/bool.hpp"
 
 using namespace std::chrono_literals;
@@ -302,6 +305,46 @@ private:
           context_->gps_quality = std::clamp(1.0f - msg->position_accuracy, 0.0f, 1.0f);
         });
 
+    // Phase 2 (Plan 02-06) — /dock_match/* + /scan_kicp subscribers.
+    // FineDock + RecordDockApproachPose + PreUndockClearanceCheck consume
+    // these via BTContext. Pose: reliable depth=1 (matches Plan 02-04
+    // publisher QoS). Confidence + scan_kicp: SensorDataQoS (best-effort,
+    // volatile).
+    dock_match_pose_sub_ =
+        create_subscription<geometry_msgs::msg::PoseWithCovarianceStamped>(
+            "/dock_match/pose",
+            rclcpp::QoS(1).reliable(),
+            [this](geometry_msgs::msg::PoseWithCovarianceStamped::ConstSharedPtr msg)
+            {
+              std::lock_guard<std::mutex> lock(context_->context_mutex);
+              context_->latest_dock_match_pose = *msg;
+              context_->latest_dock_match_pose_received = true;
+              context_->last_dock_match_pose_at = std::chrono::steady_clock::now();
+            });
+
+    dock_match_conf_sub_ =
+        create_subscription<mowgli_interfaces::msg::DockMatchConfidence>(
+            "/dock_match/confidence",
+            rclcpp::SensorDataQoS(),
+            [this](mowgli_interfaces::msg::DockMatchConfidence::ConstSharedPtr msg)
+            {
+              std::lock_guard<std::mutex> lock(context_->context_mutex);
+              context_->latest_dock_match_conf = *msg;
+              context_->last_dock_match_trusted = msg->trusted;
+              context_->last_dock_match_conf_at = std::chrono::steady_clock::now();
+            });
+
+    scan_kicp_sub_ = create_subscription<sensor_msgs::msg::LaserScan>(
+        "/scan_kicp",
+        rclcpp::SensorDataQoS(),
+        [this](sensor_msgs::msg::LaserScan::ConstSharedPtr msg)
+        {
+          std::lock_guard<std::mutex> lock(context_->context_mutex);
+          context_->latest_scan_kicp = *msg;
+          context_->latest_scan_kicp_received = true;
+          context_->last_scan_kicp_at = std::chrono::steady_clock::now();
+        });
+
     RCLCPP_DEBUG(get_logger(), "Topic subscribers created");
   }
 
@@ -497,6 +540,12 @@ private:
   rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr boundary_violation_sub_;
   rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr lethal_boundary_violation_sub_;
   rclcpp::Subscription<mowgli_interfaces::msg::AbsolutePose>::SharedPtr gps_sub_;
+  // Phase 2 — /dock_match/* + /scan_kicp consumers (Plan 02-06).
+  rclcpp::Subscription<geometry_msgs::msg::PoseWithCovarianceStamped>::SharedPtr
+      dock_match_pose_sub_;
+  rclcpp::Subscription<mowgli_interfaces::msg::DockMatchConfidence>::SharedPtr
+      dock_match_conf_sub_;
+  rclcpp::Subscription<sensor_msgs::msg::LaserScan>::SharedPtr scan_kicp_sub_;
 
   // Service server
   rclcpp::Service<mowgli_interfaces::srv::HighLevelControl>::SharedPtr high_level_control_srv_;

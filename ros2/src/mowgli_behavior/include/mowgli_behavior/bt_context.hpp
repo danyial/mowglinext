@@ -22,11 +22,14 @@
 #include <string>
 #include <vector>
 
+#include "geometry_msgs/msg/pose_with_covariance_stamped.hpp"
 #include "mowgli_interfaces/msg/coverage_waypoint.hpp"
+#include "mowgli_interfaces/msg/dock_match_confidence.hpp"
 #include "mowgli_interfaces/msg/emergency.hpp"
 #include "mowgli_interfaces/msg/power.hpp"
 #include "mowgli_interfaces/msg/status.hpp"
 #include "rclcpp/rclcpp.hpp"
+#include "sensor_msgs/msg/laser_scan.hpp"
 #include "tf2_ros/buffer.hpp"
 #include "tf2_ros/transform_listener.hpp"
 
@@ -200,6 +203,52 @@ struct BTContext
   // cannot be used directly with spin_until_future_complete).
   // -----------------------------------------------------------------------
   rclcpp::Node::SharedPtr helper_node;
+
+  // -----------------------------------------------------------------------
+  // Phase 2 (LiDAR dock pose estimation) — populated by behavior_tree_node
+  // subscribers from /dock_match/* + /scan_kicp. All fields zero/false
+  // until the first message arrives, so day-1 deployments without the
+  // matcher node deployed still tick cleanly.
+  //
+  // CLAUDE.md AI #1 compliance: BT nodes only READ these fields and (for
+  // FineDock) publish to /cmd_vel_docking via twist_mux priority 15. No
+  // BT node feeds robot_localization or publishes TF.
+  // -----------------------------------------------------------------------
+
+  /// Latest /dock_match/pose (PoseWithCovarianceStamped, reliable depth=1).
+  /// Published by mowgli_lidar_docking::DockScanMatchNode ONLY when
+  /// confidence.trusted == true (Plan 02-04 contract). Pose absence is
+  /// the "not yet trusted" baseline signal.
+  geometry_msgs::msg::PoseWithCovarianceStamped latest_dock_match_pose;
+  bool latest_dock_match_pose_received{false};
+  std::chrono::steady_clock::time_point last_dock_match_pose_at{};
+
+  /// Latest /dock_match/confidence (SensorDataQoS, ~10 Hz). Published
+  /// every tick of the matcher (including degraded / TF-far / scan-missing
+  /// paths) so consumers see a clean trusted=false baseline at t=0
+  /// (Pitfall 6 mitigation).
+  mowgli_interfaces::msg::DockMatchConfidence latest_dock_match_conf;
+  bool last_dock_match_trusted{false};
+  std::chrono::steady_clock::time_point last_dock_match_conf_at{};
+
+  /// Latest /scan_kicp (sensor_msgs::msg::LaserScan, SensorDataQoS).
+  /// Used by PreUndockClearanceCheck for the rear-sector probe and by
+  /// RecordDockApproachPose for the SPEC R-11 PCD auto-refresh.
+  sensor_msgs::msg::LaserScan latest_scan_kicp;
+  bool latest_scan_kicp_received{false};
+  std::chrono::steady_clock::time_point last_scan_kicp_at{};
+
+  /// Set to true by PostUndockRtkValidation when 0.5 < error_xy <= 1.5 m.
+  /// Future BT nodes / GUI may surface this via HighLevelStatus.message
+  /// so the operator knows the dock pose may be stale.
+  bool dock_pose_suspect{false};
+
+  /// Disk paths (defaults match the in-tree convention; overridable via
+  /// ROS params on the BT node so tests can redirect to tmpdirs).
+  std::string dock_approach_path{"/ros2_ws/maps/dock_approach.yaml"};
+  std::string dock_calibration_path{"/ros2_ws/maps/dock_calibration.yaml"};
+  std::string dock_scan_path{"/ros2_ws/maps/dock_scan.pcd"};
+  std::string dock_scan_meta_path{"/ros2_ws/maps/dock_scan_meta.yaml"};
 };
 
 }  // namespace mowgli_behavior

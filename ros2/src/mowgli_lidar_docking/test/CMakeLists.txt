@@ -54,3 +54,16 @@ target_link_libraries(test_kinematic_icp_dock_matcher mowgli_lidar_docking_lib)
 # ---------------------------------------------------------------------------
 ament_add_gtest(test_dock_scan_match_node test_dock_scan_match_node.cpp)
 target_link_libraries(test_dock_scan_match_node mowgli_lidar_docking_lib)
+
+# ---------------------------------------------------------------------------
+# Plan 02-09 (gap closure) regression smoke test.
+#
+# Pins the GAP-02 fix: kinematic_icp/pipeline/KinematicICP.hpp +
+# kiss_icp/core/VoxelHashMap.hpp must remain reachable from any future
+# mowgli_lidar_docking translation unit. If a future CMakeLists
+# "simplification" removes the add_subdirectory of kinematic_icp cpp/
+# or removes the kinematic_icp_pipeline link, THIS test fails to build
+# loudly with the same error that originally surfaced GAP-02.
+# ---------------------------------------------------------------------------
+ament_add_gtest(test_kinematic_icp_headers_reachable test_kinematic_icp_headers_reachable.cpp)
+target_link_libraries(test_kinematic_icp_headers_reachable mowgli_lidar_docking_lib)

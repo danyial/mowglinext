@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: unknown
-stopped_at: Completed 02-07-PLAN.md (BT main_tree wiring + GUI dock-card extension)
-last_updated: "2026-04-30T05:58:17.157Z"
+stopped_at: Plan 02-08 automatable scope complete; Pi5 hardware UAT pending
+last_updated: "2026-04-30T08:00:00.000Z"
 progress:
   total_phases: 2
   completed_phases: 1
@@ -21,7 +21,7 @@ progress:
 
 ## Current Plan
 
-02-07 — BT main_tree.xml wiring + GUI dock-card extension (COMPLETE — commits `0513f352`, `57d91972`; SUMMARY at `.planning/phases/02-lidar-dock-pose-estimation/02-07-SUMMARY.md`. SPEC R-5, R-9, R-10, R-11, R-12, R-13 wiring closed; D-09, D-10, D-11, D-12 GUI surface live. Pre-existing `ros.generated.ts` TS bug blocks `yarn build`; documented in deferred-items.md and out-of-scope per SCOPE BOUNDARY.)
+02-08 — Sim publisher + e2e + monitor + Pi5 checklist (🟡 AUTOMATABLE COMPLETE; T1+T2 ✅ commits `ba9647de`, `9d0fd50c`, `5544c763`; SUMMARY at `.planning/phases/02-lidar-dock-pose-estimation/02-08-SUMMARY.md`. T3 ⬜ Pi5 5-of-5 hardware UAT pending operator verification per `02-08-PI5-CHECKLIST.md`. D-14 sim publisher + sim_lidar_docking.launch.py + e2e_test `_run_fine_dock_phase` + D-15 mow_session_monitor `dock_match.*` + `lateral_error_at_contact` fields + 02-VERIFICATION.md acceptance matrix. Phase 2 closure blocked on operator running PI5-CHECKLIST + committing 02-08-PI5-RESULTS.md.)
 
 ## Total Plans
 
@@ -29,8 +29,8 @@ progress:
 
 ## Resume point
 
-- **Last completed step:** Plan 02-07 — BT main_tree.xml wiring + GUI dock-card extension. All 6 `<DockRobot>` callsites migrated to `<Sequence><ApproachDock/><FineDock/></Sequence>` (R-10); UndockSequence extended with PreUndockClearanceCheck + PostUndockRtkValidation + RecordDockApproachPose (R-5, R-11, R-12, R-13); GUI dockMatchPose + dockMatchConfidence Go-relay topics, useDockMatch hook, DockMatchCard component with D-11 Recapture confirm modal, MowerStatus topbar Popover trigger.
-- **Next step:** Plan 02-08 — e2e_test extension (synthetic /scan_kicp publisher + full undock/mow/dock cycle) + mow_session_monitor JSONL fields for lateral_error_at_contact + Pi5 5-of-5 hardware smoke (operator-gated). Plus phase-end podman colcon build to clear all DEFERRED-TO-PHASE-END-BUILD steps from Plans 02-01 through 02-07.
+- **Last completed step:** Plan 02-08 Tasks 1+2 — automatable scope. D-14 synthetic_scan_kicp_publisher + sim_lidar_docking.launch.py + pre-baked sim_dock_scan.pcd fixture + e2e_test `_run_fine_dock_phase` + D-15 mow_session_monitor `/dock_match/{pose,confidence}` subscribers + per-sample `dock_match.*` fields + rising-edge `lateral_error_at_contact_m` + summary `dock_match_summary` block + 02-VERIFICATION.md (29 acceptance rows) + 02-08-PI5-CHECKLIST.md (operator runbook).
+- **Next step:** Phase-end podman colcon build to clear DEFERRED-TO-PHASE-END-BUILD steps from Plans 02-01 through 02-08; THEN operator runs `02-08-PI5-CHECKLIST.md` on Pi5 for the 5-of-5 hardware UAT (R-7/R-9/R-11 hardware gates) + commits `02-08-PI5-RESULTS.md`; THEN `/gsd-verify-phase 2` flips hardware rows in 02-VERIFICATION.md. Phase 2 closes only after that sequence completes.
 - **Auto-chain flag persisted:** yes (`workflow._auto_chain_active=true` in `.planning/config.json`)
 - **Wave 1 plans:** 01-01 ✅ COMPLETE, 01-03 ✅ COMPLETE
 - **Wave 2 plans:** 01-02 ✅ COMPLETE, 01-04 ✅ COMPLETE
@@ -41,10 +41,13 @@ progress:
 
 ## Last session
 
-- **Last session:** 2026-04-30T05:58:03.907Z
-- **Stopped at:** Completed 02-07-PLAN.md (BT main_tree wiring + GUI dock-card extension)
+- **Last session:** 2026-04-30T08:00:00.000Z
+- **Stopped at:** Plan 02-08 automatable scope complete; Pi5 hardware UAT pending
 - **Resume file:** None
-- **Blockers:** SPEC AC-13 — operator must execute the Pi5 Eichenau garden smoke (procedure documented in 01-09-SUMMARY.md). Until then, Phase 1 remains in "automatable complete, hardware-verified pending" state. Phase 2 builds + colcon tests are deferred to phase-end podman build (host = macOS, no colcon).
+- **Blockers:**
+  - SPEC AC-13 (Phase 1) — operator must still execute the Pi5 Eichenau garden 5-of-5 smoke per 01-09-SUMMARY.md.
+  - Phase 2 — operator must execute the new Pi5 5-of-5 hardware UAT per `02-08-PI5-CHECKLIST.md` (R-7 ≤ 2 cm lateral / ≤ 1° yaw at contact, R-9 manual E-Stop test in cycle 3, R-11 ≥7-day auto-refresh in one cycle). Operator commits `02-08-PI5-RESULTS.md` afterwards; `/gsd-verify-phase 2` flips R-7/R-9/R-11 hardware rows in `02-VERIFICATION.md`.
+  - Phase 2 phase-end podman build (host = macOS, no colcon) — clears DEFERRED-TO-PHASE-END-BUILD steps from Plans 02-01 through 02-08 before the operator's 5-of-5 begins.
 
 ## Performance Metrics
 
@@ -68,6 +71,7 @@ progress:
 | Phase 02 P05 | 25 | 1 tasks | 3 files |
 | Phase 02 P06 | 9 | 2 tasks | 8 files |
 | Phase 02 P07 | 18 | 2 tasks | 8 files |
+| Phase 02 P08 | 25 | 3 tasks (T1+T2 ✅; T3 Pi5 5-of-5 pending operator) | 11 files |
 
 ## Active branch
 
@@ -156,3 +160,8 @@ These were locked in chat on 2026-04-28 before `/gsd-spec-phase` started — the
 | 2026-04-30 | Plan 02-07: GUI dock-card extension uses Go-relay topicMap (D-12 lock); DockMatchCard surfaced via antd Popover trigger in MowerStatus topbar; Recapture button reuses /api/calibration/imu-yaw | No new browser-side rosbridge dependency. Compact topbar Popover keeps MowerStatus visually consistent while D-09 placement (next to Charging indicator) is honoured. |
 | 2026-04-30 | Plan 02-07: DockMatchConfidence type redeclared inline in useDockMatch.ts (NOT imported from ros.generated.ts or hand-edited into ros.ts) | ros.generated.ts has the type but is broken at HEAD (MapAreaConstants enum self-reference, lines 281-283 — pre-existing Plan 02-01 codegen bug). ros.ts is hand-curated and not yet resynced. Inline redeclaration avoids hand-editing either; Phase-2-out-of-scope per deferred-items.md. |
 | 2026-04-30 | Plan 02-07: yarn build BLOCKED by pre-existing ros.generated.ts MapAreaConstants enum bug; documented in deferred-items.md, NOT auto-fixed | SCOPE BOUNDARY (deviation rules): pre-existing failure in unrelated file. cd gui && go build ./... exits 0; tsc with ros.generated.ts excluded passes — Plan 02-07 files compile cleanly in isolation. |
+| 2026-04-30 | Plan 02-08: pre-baked sim_dock_scan.pcd over launch-time sim calibration drive | Determinism + speed > realism. PCD is generated from the same V-funnel synthesizer with `noise_sigma=0`; live sim publisher applies σ=5 mm noise during the run. CI repeatability + faster sim startup. |
+| 2026-04-30 | Plan 02-08: Sim FineDock phase asserts `is_charging` engaged + matcher trusted=true at least once, NOT lateral_error ≤ 2 cm | Sim noise floor (synthetic σ=5 mm + Gazebo wheel-odom drift) differs from real LD19 noise floor; the 2-cm SPEC R-7 gate belongs to the hardware bench. Sim acts as smoke test only. |
+| 2026-04-30 | Plan 02-08: lateral_error_at_contact_m fires only on rising edge of is_charging | One value per cycle is exactly what the 5-of-5 acceptance grep needs. Sampling every tick during dock contact would dilute the metric; tail outliers would be hidden inside the distribution. |
+| 2026-04-30 | Plan 02-08: synthetic_scan_kicp_publisher reads TF in `map -> base_footprint_wheels` not `map -> base_footprint`; static fallback robot pose for early-CI ticks | Matches the parallel-tree convention per CLAUDE.md Architecture Invariant #1; consumer behavior identical between sim and Pi5. Static fallback covers the case where Gazebo's clock hasn't started yet. |
+| 2026-04-30 | Plan 02-08: DockMatchConfidence subscriber in mow_session_monitor is lazy-imported | Pre-Phase-2 builds don't ship the message; monitor still runs and emits null dock_match.* fields rather than crashing on import. Mirrors the existing AbsolutePose/Status lazy-import pattern. |

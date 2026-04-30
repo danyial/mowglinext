@@ -47,7 +47,7 @@ Plans:
 
 ### Phase 2 — LiDAR-based dock pose estimation (undock + closed-loop docking)
 
-**Status:** ⬜ NEXT (operator-blocking — promoted from backlog 2026-04-29 after end-to-end mow showed RTK-only docking misses the V-funnel even with continuous RTK-Fixed)
+**Status:** 🟡 automatable scope COMPLETE (Plans 02-01 through 02-08 Tasks 1+2); Pi5 5-of-5 hardware UAT pending operator verification per `.planning/phases/02-lidar-dock-pose-estimation/02-08-PI5-CHECKLIST.md`. Phase-end podman build (host = macOS, no colcon) clears every DEFERRED-TO-PHASE-END-BUILD step from Plans 02-01 through 02-08 first; then operator runs 5-of-5; then `/gsd-verify-phase 2` flips R-7 / R-9 / R-11 hardware rows in `02-VERIFICATION.md` and Phase 2 closes.
 **GH issues:** [#43](https://github.com/danyial/mowglinext/issues/43) (smart undock: LiDAR free-space probe + RTK validation), [#75](https://github.com/danyial/mowglinext/issues/75) (closed-loop LiDAR docking final approach)
 **Goal:** Eliminate the systematic "robot misses the dock V-funnel" failure mode by switching from RTK-only docking to a hybrid RTK-coarse + LiDAR-fine approach. The same LiDAR scan-match infrastructure is shared with the smart-undock work — capture once, use both directions.
 
@@ -77,7 +77,7 @@ Plans:
 - [x] 02-05-PLAN.md — dock_yaw_to_set_pose.py cascade extension (lidar > file > heading) + 8 cascade pytests + AUTONOMOUS-state regression (R-4) → SUMMARY at `.planning/phases/02-lidar-dock-pose-estimation/02-05-SUMMARY.md` (commits `b17b6a1b`, `0a9d6980`)
 - [x] 02-06-PLAN.md — 5 new BT nodes (RecordDockApproachPose / ApproachDock / FineDock / PreUndockClearanceCheck / PostUndockRtkValidation) + BTContext extension + factory registration + 13 gtests (R-5..R-9, R-11..R-13) → SUMMARY at `.planning/phases/02-lidar-dock-pose-estimation/02-06-SUMMARY.md` (commits `bca150c8`, `d38fa39b`)
 - [x] 02-07-PLAN.md — main_tree.xml migration (6 DockRobot sites + UndockSequence extension) + GUI Dock-card extension (useDockMatch hook + DockMatchCard component + topicMap relay per D-12) (R-5, R-9, R-10, R-11, R-12, R-13) → SUMMARY at `.planning/phases/02-lidar-dock-pose-estimation/02-07-SUMMARY.md` (commits `0513f352`, `57d91972`)
-- [ ] 02-08-PLAN.md — Sim infrastructure (synthetic_scan_kicp_publisher + sim_lidar_docking.launch.py + e2e_test extension) + mow_session_monitor extension (D-15) + 02-VERIFICATION.md + Pi5 5-of-5 hardware acceptance checkpoint (operator-gated, autonomous: false)
+- [~] 02-08-PLAN.md — Sim infrastructure (synthetic_scan_kicp_publisher + sim_lidar_docking.launch.py + e2e_test extension) + mow_session_monitor extension (D-15) + 02-VERIFICATION.md + Pi5 5-of-5 hardware acceptance checkpoint (operator-gated, autonomous: false). **Automatable scope COMPLETE** (Tasks 1+2; commits `ba9647de`, `9d0fd50c`, `5544c763`; SUMMARY at `.planning/phases/02-lidar-dock-pose-estimation/02-08-SUMMARY.md`). **Task 3 Pi5 hardware UAT ⬜ pending operator verification** — runbook at `.planning/phases/02-lidar-dock-pose-estimation/02-08-PI5-CHECKLIST.md`; results land in `02-08-PI5-RESULTS.md`.
 
 ### Phase 3 — Smooth outline-pass transitions (≤30° tangent change)
 

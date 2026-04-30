@@ -3,34 +3,34 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: unknown
-stopped_at: Completed 02-06-PLAN.md (5 LiDAR-dock BT nodes; SPEC R-5..R-9 + R-11..R-13)
-last_updated: "2026-04-30T05:42:36.844Z"
+stopped_at: Completed 02-07-PLAN.md (BT main_tree wiring + GUI dock-card extension)
+last_updated: "2026-04-30T05:58:17.157Z"
 progress:
   total_phases: 2
   completed_phases: 1
   total_plans: 19
-  completed_plans: 17
-  percent: 89
+  completed_plans: 18
+  percent: 95
 ---
 
 # Project state
 
 ## Current phase
 
-1 — Coverage Planner Rewrite (Waves 1-4 complete + Wave 5 automatable scope complete; SPEC AC-13 Pi5 hardware smoke pending operator verification)
+2 — LiDAR Dock Pose Estimation (Wave 1-3 complete + Wave 4 Plan 02-07 complete; Plan 02-08 e2e + Pi5 hardware smoke remaining)
 
 ## Current Plan
 
-11 — dispatch_checkpoint_write BT-side fix + WriteCheckpoint integration tests (COMPLETE — commits `5405fa60`, `d1361536`, `354066e1`; SUMMARY at `.planning/phases/01-coverage-planner-rewrite/01-11-SUMMARY.md`. R-9 + R-11 end-to-end correct; SPEC AC-13 Pi5 hardware smoke remains operator-gated.)
+02-07 — BT main_tree.xml wiring + GUI dock-card extension (COMPLETE — commits `0513f352`, `57d91972`; SUMMARY at `.planning/phases/02-lidar-dock-pose-estimation/02-07-SUMMARY.md`. SPEC R-5, R-9, R-10, R-11, R-12, R-13 wiring closed; D-09, D-10, D-11, D-12 GUI surface live. Pre-existing `ros.generated.ts` TS bug blocks `yarn build`; documented in deferred-items.md and out-of-scope per SCOPE BOUNDARY.)
 
 ## Total Plans
 
-11
+19 (Phase 1: 11 plans, Phase 2: 8 plans)
 
 ## Resume point
 
-- **Last completed step:** Plan 01-11 — dispatch_checkpoint_write BT-side fix (CR-01 complete). R-9 + R-11 end-to-end correct on BT → planner → filesystem path. All 11 plans committed.
-- **Next step:** SPEC AC-13 hardware smoke on Pi5 in Eichenau garden (operator-gated — see `.planning/phases/01-coverage-planner-rewrite/01-09-SUMMARY.md` § "Hardware Checkpoint Procedure"). Re-run `/gsd-verify-phase 1` first to flip R-9 + R-11 from FAILED to VERIFIED.
+- **Last completed step:** Plan 02-07 — BT main_tree.xml wiring + GUI dock-card extension. All 6 `<DockRobot>` callsites migrated to `<Sequence><ApproachDock/><FineDock/></Sequence>` (R-10); UndockSequence extended with PreUndockClearanceCheck + PostUndockRtkValidation + RecordDockApproachPose (R-5, R-11, R-12, R-13); GUI dockMatchPose + dockMatchConfidence Go-relay topics, useDockMatch hook, DockMatchCard component with D-11 Recapture confirm modal, MowerStatus topbar Popover trigger.
+- **Next step:** Plan 02-08 — e2e_test extension (synthetic /scan_kicp publisher + full undock/mow/dock cycle) + mow_session_monitor JSONL fields for lateral_error_at_contact + Pi5 5-of-5 hardware smoke (operator-gated). Plus phase-end podman colcon build to clear all DEFERRED-TO-PHASE-END-BUILD steps from Plans 02-01 through 02-07.
 - **Auto-chain flag persisted:** yes (`workflow._auto_chain_active=true` in `.planning/config.json`)
 - **Wave 1 plans:** 01-01 ✅ COMPLETE, 01-03 ✅ COMPLETE
 - **Wave 2 plans:** 01-02 ✅ COMPLETE, 01-04 ✅ COMPLETE
@@ -41,9 +41,9 @@ progress:
 
 ## Last session
 
-- **Last session:** 2026-04-30T05:42:36.837Z
-- **Stopped at:** Completed 02-06-PLAN.md (5 LiDAR-dock BT nodes; SPEC R-5..R-9 + R-11..R-13)
-- **Resume file:** Phase-end podman build deferred to host-not-macOS executor
+- **Last session:** 2026-04-30T05:58:03.907Z
+- **Stopped at:** Completed 02-07-PLAN.md (BT main_tree wiring + GUI dock-card extension)
+- **Resume file:** None
 - **Blockers:** SPEC AC-13 — operator must execute the Pi5 Eichenau garden smoke (procedure documented in 01-09-SUMMARY.md). Until then, Phase 1 remains in "automatable complete, hardware-verified pending" state. Phase 2 builds + colcon tests are deferred to phase-end podman build (host = macOS, no colcon).
 
 ## Performance Metrics
@@ -67,6 +67,7 @@ progress:
 | Phase 02 P04 | 35 | 2 tasks | 11 files |
 | Phase 02 P05 | 25 | 1 tasks | 3 files |
 | Phase 02 P06 | 9 | 2 tasks | 8 files |
+| Phase 02 P07 | 18 | 2 tasks | 8 files |
 
 ## Active branch
 
@@ -150,3 +151,8 @@ These were locked in chat on 2026-04-28 before `/gsd-spec-phase` started — the
 | 2026-04-29 | Plan 02-04: /dock_match/pose published ONLY when trusted=true; /dock_match/confidence published every tick (including degraded + TF-far + scan-missing paths) | Pitfall 6 mitigation: consumers see a clean baseline at t=0 before any scan arrives. Pose absence is the "not yet trusted" signal; conf liveness is the "alive" heartbeat. Both topics are needed for a clean state machine in FineDock onRunning. |
 | 2026-04-29 | Plan 02-04: 180° flip detector (Pitfall 1) uses atan2(R(1,0), R(0,0)) on the rotation matrix + hand-rolled shortest_angular_distance | Keeps the matcher library free of tf2 / angles dependencies. The trust gate downstream collapses (valid && trusted_metric) into a single bool, so a flipped pose surfaces as trusted=false even if the confidence math alone would have let it through. |
 | 2026-04-29 | Plan 02-04: Test ctor injects an IDockMatcher to bypass kiss_icp + LaserProjection + a live tf_buffer in the gtest harness | mtime watcher's dynamic_cast<KinematicIcpDockMatcher*> returns nullptr for the MockMatcher path so the watcher quietly skips Reload — the production Reload path is exercised by ReloadSwapsDockScan in test_kinematic_icp_dock_matcher. End-to-end /scan_kicp -> /dock_match/pose smoke is DEFERRED-TO-PLAN-02-08-SIM. |
+| 2026-04-30 | Plan 02-07: 6 DockRobot sites migrated to LidarDock\* Sequence subtrees (R-10); UndockSequence extended with Pre/Post + RecordDockApproachPose (R-5, R-11, R-12, R-13) | Each migrated site gets a unique LidarDock\* name (Critical/Rain/Battery/FailedCoverage/MowingComplete/Home) so BT-log diffs surface which dock-trigger path fired. |
+| 2026-04-30 | Plan 02-07: R-9 verdict — no new XML guard; existing IsCommand+ClearCommand pattern + EmergencyHandler-does-not-restore-command together prevent FineDock auto-restart after E-Stop reset | Verified at plan-revision time against main_tree.xml lines 165, 170-180, 318, 510, 538. Plan 02-06 unit test FineDockHaltsOnEmergency pins the in-node onHalted publish_zero contract. |
+| 2026-04-30 | Plan 02-07: GUI dock-card extension uses Go-relay topicMap (D-12 lock); DockMatchCard surfaced via antd Popover trigger in MowerStatus topbar; Recapture button reuses /api/calibration/imu-yaw | No new browser-side rosbridge dependency. Compact topbar Popover keeps MowerStatus visually consistent while D-09 placement (next to Charging indicator) is honoured. |
+| 2026-04-30 | Plan 02-07: DockMatchConfidence type redeclared inline in useDockMatch.ts (NOT imported from ros.generated.ts or hand-edited into ros.ts) | ros.generated.ts has the type but is broken at HEAD (MapAreaConstants enum self-reference, lines 281-283 — pre-existing Plan 02-01 codegen bug). ros.ts is hand-curated and not yet resynced. Inline redeclaration avoids hand-editing either; Phase-2-out-of-scope per deferred-items.md. |
+| 2026-04-30 | Plan 02-07: yarn build BLOCKED by pre-existing ros.generated.ts MapAreaConstants enum bug; documented in deferred-items.md, NOT auto-fixed | SCOPE BOUNDARY (deviation rules): pre-existing failure in unrelated file. cd gui && go build ./... exits 0; tsc with ros.generated.ts excluded passes — Plan 02-07 files compile cleanly in isolation. |

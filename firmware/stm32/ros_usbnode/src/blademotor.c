@@ -248,19 +248,19 @@ void BLADEMOTOR_Set(uint8_t on_off, uint8_t direction)
     blademotor_u8OnOff = on_off;
     if (on_off)
     {
-        /*if (direction) {
-            blademotor_pu8RqstMessage[5] = 0xC0;
-            blademotor_pu8RqstMessage[6] = 0xE2;
-        } else {*/
-            blademotor_pu8RqstMessage[5] = 0x80; /* change speed Motor */
-            blademotor_pu8RqstMessage[6] = 0x22; /* change CRC */
-        //}
+        /* 0x80 = run, 0xC0 = run + direction bit (reverse). The original
+         * reverse experiment shipped a WRONG checksum (0xE2; the sum-CRC of
+         * this frame is 0x62), so the motor controller silently ignored the
+         * frame and reverse looked "unsupported" — computed CRC fixes that
+         * class of bug for good (same pattern as drivemotor.c). 2026-07-13 */
+        blademotor_pu8RqstMessage[5] = direction ? 0xC0 : 0x80;
     }
     else
     {
-        blademotor_pu8RqstMessage[5] = 0x00; /* change speed Motor */
-        blademotor_pu8RqstMessage[6] = 0xa2; /* change CRC */
+        blademotor_pu8RqstMessage[5] = 0x00;
     }
+    blademotor_pu8RqstMessage[6] =
+        crcCalc(blademotor_pu8RqstMessage, BLADEMOTOR_LENGTH_RQST_MSG - 1);
 }
 
 /// @brief drive motor receive interrupt handler

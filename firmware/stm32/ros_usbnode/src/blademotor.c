@@ -59,6 +59,7 @@ uint32_t BLADEMOTOR_u32Error = 0;
 static uint8_t blademotor_pu8ReceivedData[BLADEMOTOR_LENGTH_RECEIVED_MSG] = {0};
 static uint8_t blademotor_pu8RqstMessage[BLADEMOTOR_LENGTH_RQST_MSG]  = {0x55, 0xaa, 0x03, 0x20, 0x80, 0x00, 0xA2};
 static uint8_t blademotor_u8OnOff = 0;
+static uint8_t blademotor_u8Dir = 0;   /* 0 = normal, 1 = reverse */
 
 const uint8_t blademotor_pcu8Preamble[5]  = {0x55,0xAA,0x0A,0x2,0xD0};
 const uint8_t blademotor_pcu8InitMsg[BLADEMOTOR_LENGTH_INIT_MSG] =  { 0x55, 0xaa, 0x12, 0x20, 0x80, 0x00, 0xac, 0x0d, 0x00, 0x02, 0x32, 0x50, 0x1e, 0x04, 0x00, 0x15, 0x21, 0x05, 0x0a, 0x19, 0x3c, 0xaa };
@@ -71,17 +72,22 @@ const uint8_t blademotor_pcu8InitMsg[BLADEMOTOR_LENGTH_INIT_MSG] =  { 0x55, 0xaa
 *******************************************************************************/
 
 void blademotor_prepareMsg(void)
-{    
+{
+    /* This runs every BLADEMOTOR_App tick right before the DMA transmit, so
+     * it must encode the FULL commanded state. It used to hardcode 0x80/0x22
+     * (run, normal direction) and thereby overwrote the reverse bit that
+     * BLADEMOTOR_Set had just written — reverse frames never reached the
+     * motor controller. 0x80 = run, 0xC0 = run + direction bit (reverse). */
     if (blademotor_u8OnOff)
     {
-        blademotor_pu8RqstMessage[5] = 0x80; /* change speed Motor */
-        blademotor_pu8RqstMessage[6] = 0x22; /* change CRC */
+        blademotor_pu8RqstMessage[5] = blademotor_u8Dir ? 0xC0 : 0x80;
     }
     else
     {
-        blademotor_pu8RqstMessage[5] = 0x00; /* change speed Motor */
-        blademotor_pu8RqstMessage[6] = 0xa2; /* change CRC */
+        blademotor_pu8RqstMessage[5] = 0x00;
     }
+    blademotor_pu8RqstMessage[6] =
+        crcCalc(blademotor_pu8RqstMessage, BLADEMOTOR_LENGTH_RQST_MSG - 1);
 }
 
 /**
@@ -244,23 +250,13 @@ void  BLADEMOTOR_App(void){
 /// @brief control blade motor (there is no speed control for this motor)
 /// @param on_off 1 to turn on, 0 to turn off
 void BLADEMOTOR_Set(uint8_t on_off, uint8_t direction)
-{       
+{
     blademotor_u8OnOff = on_off;
-    if (on_off)
-    {
-        /* 0x80 = run, 0xC0 = run + direction bit (reverse). The original
-         * reverse experiment shipped a WRONG checksum (0xE2; the sum-CRC of
-         * this frame is 0x62), so the motor controller silently ignored the
-         * frame and reverse looked "unsupported" — computed CRC fixes that
-         * class of bug for good (same pattern as drivemotor.c). 2026-07-13 */
-        blademotor_pu8RqstMessage[5] = direction ? 0xC0 : 0x80;
-    }
-    else
-    {
-        blademotor_pu8RqstMessage[5] = 0x00;
-    }
-    blademotor_pu8RqstMessage[6] =
-        crcCalc(blademotor_pu8RqstMessage, BLADEMOTOR_LENGTH_RQST_MSG - 1);
+    blademotor_u8Dir = direction;
+    /* Frame encoding (incl. computed CRC — the original reverse experiment
+     * shipped a wrong hardcoded checksum) lives in blademotor_prepareMsg,
+     * which re-runs on every App tick anyway. */
+    blademotor_prepareMsg();
 }
 
 /// @brief drive motor receive interrupt handler

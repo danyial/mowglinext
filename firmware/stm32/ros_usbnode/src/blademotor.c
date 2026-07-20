@@ -55,6 +55,8 @@ bool BLADEMOTOR_bActivated = false;
 uint16_t BLADEMOTOR_u16RPM = 0;
 uint16_t BLADEMOTOR_u16Power = 0;
 uint32_t BLADEMOTOR_u32Error = 0;
+uint8_t BLADEMOTOR_u8LastFault = 0;
+static volatile bool blademotor_bFaultPending = false;
 
 static uint8_t blademotor_pu8ReceivedData[BLADEMOTOR_LENGTH_RECEIVED_MSG] = {0};
 static uint8_t blademotor_pu8RqstMessage[BLADEMOTOR_LENGTH_RQST_MSG]  = {0x55, 0xaa, 0x03, 0x20, 0x80, 0x00, 0xA2};
@@ -230,10 +232,16 @@ void  BLADEMOTOR_App(void){
     
     case BLADEMOTOR_RUN:
 
-        /*error detected*/
-        if(blademotor_pu8ReceivedData[6] != 0){
-            blademotor_u8OnOff = 0;
-            BLADEMOTOR_u32Error++;
+        /* Fault handling moved into BLADEMOTOR_ReceiveIT (2026-07-20): this
+         * used to test byte 6 of the RAW DMA buffer every tick, WITHOUT the
+         * preamble/CRC validation the data parse gets — one garbled frame at
+         * session start incremented the "error" counter each run. Faults now
+         * only count from CRC-valid frames; here we just report them from
+         * task context (debug_printf must not run in the UART ISR). */
+        if (blademotor_bFaultPending) {
+            blademotor_bFaultPending = false;
+            debug_printf("!! Blade driver fault byte 0x%02X (count %lu)\r\n",
+                         BLADEMOTOR_u8LastFault, (unsigned long)BLADEMOTOR_u32Error);
         }
         blademotor_prepareMsg();
         /* prepare to receive the message before to launch the command */        
@@ -275,7 +283,17 @@ void BLADEMOTOR_ReceiveIT(void)
                 BLADEMOTOR_bActivated = false;
             }
             BLADEMOTOR_u16RPM = blademotor_pu8ReceivedData[7] + (blademotor_pu8ReceivedData[8]<<8);
-            BLADEMOTOR_u16Power = blademotor_pu8ReceivedData[9] + (blademotor_pu8ReceivedData[10]<<8) ;           
+            BLADEMOTOR_u16Power = blademotor_pu8ReceivedData[9] + (blademotor_pu8ReceivedData[10]<<8) ;
+            /* Driver fault byte — only trusted from a CRC-valid frame (the
+             * old raw-buffer check in BLADEMOTOR_App counted garbled startup
+             * frames as errors). Latch the value for the debug report and
+             * stop commanding the blade, like the original behavior. */
+            if (blademotor_pu8ReceivedData[6] != 0) {
+                BLADEMOTOR_u8LastFault = blademotor_pu8ReceivedData[6];
+                BLADEMOTOR_u32Error++;
+                blademotor_u8OnOff = 0;
+                blademotor_bFaultPending = true;
+            }
         }
   
     }

@@ -45,6 +45,9 @@ extern bool BLADEMOTOR_bActivated;
 extern uint16_t BLADEMOTOR_u16RPM;
 extern uint16_t BLADEMOTOR_u16Power;
 extern uint32_t BLADEMOTOR_u32Error;
+/* Raw fault byte (response byte 6) from the last CRC-valid frame that
+ * reported a fault. 0 until the first real fault since boot. */
+extern uint8_t BLADEMOTOR_u8LastFault;
 /******************************************************************************
 * PUBLIC Function Prototypes
 *******************************************************************************/
